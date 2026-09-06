@@ -5,8 +5,6 @@
 *.rs.bk
 *.pdb
 
-# Library-only crates generally do not commit Cargo.lock; applications should commit it.
-/Cargo.lock
 
 # Local environment and editor state.
 .env
@@ -19,3 +17,14 @@
 .vscode/
 .DS_Store
 Thumbs.db
+
+/lint/target/
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/
+**/__pycache__/
+*.py[cod]
+.ruff_cache/
+.statement-spacing/
+/validation-output/
+# Cargo.lock files SHOULD be committed after bootstrap resolves them.

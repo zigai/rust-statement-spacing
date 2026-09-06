@@ -35,16 +35,15 @@ install-spell-tool: _stable-tools
 install-feature-tool: _stable-tools
   cargo +stable install --locked cargo-hack
 
-# Install cargo-semver-checks
-install-semver-tool: _stable-tools
-  cargo +stable install --locked cargo-semver-checks
 
 # Install all optional repository tools
-install-tools: install-nextest install-coverage-tool install-deny-tool install-spell-tool install-feature-tool install-semver-tool
+install-tools: install-nextest install-coverage-tool install-deny-tool install-spell-tool install-feature-tool
 
 # Format all Rust targets
 format:
   cargo fmt --all
+  cargo +stable fmt --manifest-path lint/Cargo.toml
+  cargo +stable fmt --manifest-path fuzz/Cargo.toml
 
 # Compile every workspace target and feature
 check-code:
@@ -74,7 +73,7 @@ doctest:
 
 # Check default, no-default, individual, and shallow feature combinations
 features:
-  cargo hack check --workspace --feature-powerset --depth 1 --no-dev-deps --all-targets
+  cargo hack check --workspace --feature-powerset --depth 1 --all-targets
 
 # Generate an HTML source coverage report
 coverage:
@@ -107,21 +106,6 @@ deny:
 spell:
   typos
 
-# Check public API compatibility with the latest published release
-semver:
-  cargo semver-checks check-release --package rust-statement-spacing
-
-# List the files that would be included in the crate archive
-package-list:
-  cargo package --package rust-statement-spacing --list
-
-# Create and verify the distributable crate archive
-package:
-  cargo package --package rust-statement-spacing
-
-# Perform all publication checks without uploading
-publish-dry-run:
-  cargo publish --package rust-statement-spacing --dry-run
 
 # Install the repository's pre-commit hooks
 hooks:
@@ -132,12 +116,16 @@ clean:
   cargo clean
 
 # Run the built-in non-mutating quality gate
-check: check-code lint test docs-check
+check: check-code lint test test-driver static-check docs-check
   cargo fmt --all -- --check
+  cargo +stable fmt --manifest-path lint/Cargo.toml -- --check
+  cargo +stable fmt --manifest-path fuzz/Cargo.toml -- --check
 
 # Run the broader tool-assisted quality gate
-check-all: check-code
-  cargo fmt --all -- --check lint nextest doctest features docs-check deny spell
+check-all: check-code lint nextest doctest test-driver static-check features docs-check deny spell
+  cargo fmt --all -- --check
+  cargo +stable fmt --manifest-path lint/Cargo.toml -- --check
+  cargo +stable fmt --manifest-path fuzz/Cargo.toml -- --check
 
 # List available commands
 help:
@@ -149,3 +137,24 @@ alias dev := setup
 alias qa := check
 alias test-fast := nextest
 
+# Test the native transaction driver with explicit Cargo process doubles
+test-driver:
+  cargo build -p cargo-statement-spacing --locked
+  python3 -m unittest discover -s crates/cli/tests -v
+
+# Check source and configuration integrity
+static-check:
+  cargo run -p source-policy --locked
+
+
+# Exercise the installed native consumer without relying on the source checkout
+test-installed:
+  python3 scripts/validate.py --portable-only
+
+# Install the pinned Dylint toolchain and build the compiler plugin
+setup-dylint:
+  bash scripts/bootstrap.sh
+
+# Exercise real Dylint checks and native/verified fixes
+validate:
+  python3 scripts/validate.py
