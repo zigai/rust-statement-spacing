@@ -101,7 +101,7 @@ class WorkspaceTest(unittest.TestCase):
                 "--manifest-path",
                 str(self.root / "Cargo.toml"),
                 "--format-toolchain",
-                "1.90.0",
+                "1.96.0",
                 "--json",
                 *extra,
             ],

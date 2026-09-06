@@ -1,7 +1,7 @@
 # Rust Statement Spacing
 
 [![CI](https://github.com/zigai/rust-statement-spacing/actions/workflows/ci.yml/badge.svg)](https://github.com/zigai/rust-statement-spacing/actions/workflows/ci.yml)
-[![rustc: 1.90+](https://img.shields.io/badge/rustc-1.90%2B-orange?logo=rust)](Cargo.toml)
+[![rustc: 1.96+](https://img.shields.io/badge/rustc-1.96%2B-orange?logo=rust)](Cargo.toml)
 [![Rust Edition: 2024](https://img.shields.io/badge/edition-2024-blue.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 [![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue.svg)](#license)
 

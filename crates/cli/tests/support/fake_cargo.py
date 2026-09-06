@@ -29,7 +29,7 @@ def emit(value):
 
 
 if args == ["--version"]:
-    print("cargo 1.90.0 (test double)")
+    print("cargo 1.96.0 (test double)")
 elif args[:2] == ["fmt", "--version"]:
     changed = source.exists() and b";\n\n" in source.read_bytes()
     if scenario == "identity-change" and root == original and changed:

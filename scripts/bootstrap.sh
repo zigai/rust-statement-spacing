@@ -5,14 +5,14 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 command -v rustup >/dev/null || { echo 'Install rustup first.' >&2; exit 1; }
 python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ is required"'
-rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy
 rustup toolchain install nightly-2025-09-18 --profile minimal \
     --component rustc-dev --component llvm-tools-preview --component rustfmt
 cargo +nightly-2025-09-18 install cargo-dylint --version '=5.0.0' --locked
 cargo +nightly-2025-09-18 install dylint-link --version '=5.0.0' --locked
 (
     cd "$ROOT"
-    cargo +1.90.0 generate-lockfile
+    cargo +1.96.0 generate-lockfile
 )
 (
     # Correct cwd matters: Cargo must load lint/.cargo/config.toml for dylint-link.
