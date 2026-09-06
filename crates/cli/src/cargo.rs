@@ -4,7 +4,7 @@ use std::env;
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
@@ -204,6 +204,26 @@ impl JobObject {
         }
         Ok(())
     }
+}
+#[cfg(unix)]
+fn random_bytes(buffer: &mut [u8]) -> io::Result<()> {
+    use std::io::Read as _;
+    return fs::File::open("/dev/urandom")?.read_exact(buffer);
+}
+
+#[cfg(windows)]
+fn random_bytes(buffer: &mut [u8]) -> io::Result<()> {
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        #[link_name = "SystemFunction036"]
+        fn rtl_gen_random(buffer: *mut u8, len: u32) -> u8;
+    }
+    // SAFETY: buffer is a valid mutable slice of bytes of length buffer.len().
+    let success = unsafe { rtl_gen_random(buffer.as_mut_ptr(), buffer.len() as u32) };
+    if success == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    return Ok(());
 }
 
 #[cfg(windows)]
@@ -509,7 +529,7 @@ impl Driver {
         fs::create_dir_all(&probes)?;
         let target = temporary.join(format!("{label}-target"));
         let mut random = [0_u8; 24];
-        fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+        random_bytes(&mut random)?;
         let mut nonce = String::with_capacity(48);
         const HEX: &[u8; 16] = b"0123456789abcdef";
         for byte in random {
