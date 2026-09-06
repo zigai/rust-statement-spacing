@@ -1,0 +1,26 @@
+[package]
+name = "statement_spacing"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "WSL-inspired Rust blank-line lints with whitespace-only autofixes"
+publish = false
+
+[lib]
+name = "statement_spacing"
+crate-type = ["cdylib"]
+
+[dependencies]
+dylint_linting = "=5.0.0"
+globset = "=0.4.18"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+sha2 = "=0.10.9"
+toml = "=0.9.8"
+rust-statement-spacing-core = { path = "../crates/core" }
+rust-statement-spacing-syntax = { path = "../crates/syntax" }
+
+[workspace]
+
+[package.metadata.rust-analyzer]
+rustc_private = true

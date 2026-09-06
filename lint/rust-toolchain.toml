@@ -1,0 +1,5 @@
+# Matches the upstream Dylint v5.0.0 template. Upgrade this and the adapter together.
+[toolchain]
+channel = "nightly-2025-09-18"
+profile = "minimal"
+components = ["llvm-tools-preview", "rustc-dev", "rustfmt"]

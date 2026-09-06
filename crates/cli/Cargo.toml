@@ -1,0 +1,29 @@
+[package]
+name = "cargo-statement-spacing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Native transactional, rustfmt-verified Dylint autofixes"
+exclude = ["**/__pycache__", "*.pyc"]
+
+[dependencies]
+clap.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+[lints]
+workspace = true

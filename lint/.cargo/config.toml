@@ -1,0 +1,5 @@
+[target.'cfg(all())']
+rustflags = ["-C", "linker=dylint-link"]
+
+[resolver]
+incompatible-rust-versions = "fallback"

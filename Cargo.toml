@@ -1,62 +1,142 @@
-[package]
-name = "rust-statement-spacing"
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/syntax", "crates/cli", "tools/source-policy"]
+exclude = ["lint", "fuzz", "tests/workspaces/basic"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85.0"
-description = "A configurable Rust linter for semantic blank-line placement and statement grouping, with autofixes."
-authors = ["zigai <ziga.ivansek@gmail.com>"]
+rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/zigai/rust-statement-spacing"
 homepage = "https://github.com/zigai/rust-statement-spacing"
-documentation = "https://docs.rs/rust-statement-spacing"
 readme = "README.md"
-include = [
-    "src/**",
-    "tests/**",
-    "examples/**",
-    "benches/**",
-    "build.rs",
-    "Cargo.toml",
-    "README.md",
-    "CHANGELOG.md",
-    "LICENSE*",
-]
+keywords = ["formatting", "lint", "rustfmt", "spacing"]
+categories = ["development-tools"]
 
-[package.metadata.docs.rs]
-all-features = true
-
-[features]
-default = []
-
-[dependencies]
-
-[dev-dependencies]
-
-[workspace]
-resolver = "3"
-
-[lints]
-workspace = true
+[workspace.dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+toml = "=0.9.8"
+globset = "=0.4.18"
+ra_ap_syntax = "=0.0.297"
+clap = { version = "=4.5.48", features = ["derive", "env"] }
+tempfile = "=3.23.0"
+sha2 = "=0.10.9"
+rustix = { version = "=1.1.2", features = ["fs", "process"] }
+tokio = { version = "=1.47.1", features = ["rt-multi-thread", "process", "signal", "time", "io-util", "macros"] }
+windows-sys = { version = "=0.59.0", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_Security",
+] }
+rust-statement-spacing-core = { path = "crates/core", version = "0.1.0" }
+rust-statement-spacing-syntax = { path = "crates/syntax", version = "0.1.0" }
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }
 missing_docs = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 unreachable_pub = "warn"
-unsafe_code = "forbid"
+unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "warn"
 unused_lifetimes = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
-dbg_macro = "warn"
-expect_used = "warn"
-let_underscore_must_use = "warn"
-missing_errors_doc = "warn"
-missing_panics_doc = "warn"
-panic = "warn"
-redundant_clone = "warn"
-todo = "warn"
-undocumented_unsafe_blocks = "warn"
-unimplemented = "warn"
-unwrap_used = "warn"
+absolute_paths = "deny"
+allow_attributes_without_reason = "deny"
+clone_on_ref_ptr = "deny"
+create_dir = "deny"
+debug_assert_with_mut_call = "deny"
+dbg_macro = "deny"
+drop_non_drop = "deny"
+empty_drop = "deny"
+exit = "deny"
+expect_used = "deny"
+filetype_is_file = "deny"
+float_cmp_const = "deny"
+format_push_string = "deny"
+fn_to_numeric_cast_any = "deny"
+useless_format = "deny"
+get_unwrap = "deny"
+host_endian_bytes = "deny"
+implicit_return = "deny"
+indexing_slicing = "deny"
+io_other_error = "deny"
+iter_kv_map = "deny"
+iter_filter_is_ok = "deny"
+iter_filter_is_some = "deny"
+large_stack_arrays = "deny"
+lines_filter_map_ok = "deny"
+lossy_float_literal = "deny"
+manual_abs_diff = "deny"
+manual_bits = "deny"
+manual_clamp = "deny"
+manual_div_ceil = "deny"
+manual_flatten = "deny"
+manual_hash_one = "deny"
+manual_pattern_char_comparison = "deny"
+manual_range_contains = "deny"
+manual_rem_euclid = "deny"
+manual_midpoint = "deny"
+manual_is_ascii_check = "deny"
+manual_is_power_of_two = "deny"
+manual_repeat_n = "deny"
+manual_retain = "deny"
+manual_split_once = "deny"
+manual_strip = "deny"
+map_unwrap_or = "deny"
+match_wildcard_for_single_variants = "deny"
+mem_forget = "deny"
+mem_replace_option_with_some = "deny"
+mem_replace_with_default = "deny"
+mutex_atomic = "deny"
+needless_return = "allow"
+needless_collect = "deny"
+needless_continue = "deny"
+needless_raw_strings = "deny"
+needless_raw_string_hashes = "deny"
+option_if_let_else = "deny"
+or_fun_call = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+print_stderr = "deny"
+question_mark = "deny"
+rc_mutex = "deny"
+ref_patterns = "deny"
+redundant_clone = "deny"
+renamed_function_params = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+same_name_method = "deny"
+same_item_push = "deny"
+single_char_lifetime_names = "deny"
+string_slice = "deny"
+string_lit_as_bytes = "deny"
+suspicious_xor_used_as_pow = "deny"
+tests_outside_test_module = "allow"
+too_many_arguments = "allow"
+try_err = "deny"
+unnecessary_join = "deny"
+unnecessary_box_returns = "deny"
+unnecessary_literal_unwrap = "deny"
+unnecessary_struct_initialization = "deny"
+unchecked_time_subtraction = "deny"
+unnested_or_patterns = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreadable_literal = "deny"
+unused_async = "deny"
+unused_peekable = "deny"
+unused_rounding = "deny"
+unused_result_ok = "deny"
+verbose_bit_mask = "deny"
+unwrap_used = "deny"
+verbose_file_reads = "deny"
+while_let_on_iterator = "deny"
+write_with_newline = "deny"
+writeln_empty_string = "deny"
