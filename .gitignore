@@ -1,0 +1,21 @@
+/target/
+/coverage/
+/lcov.info
+*.profraw
+*.rs.bk
+*.pdb
+
+# Library-only crates generally do not commit Cargo.lock; applications should commit it.
+/Cargo.lock
+
+# Local environment and editor state.
+.env
+.env.*
+!.env.example
+.direnv/
+*.swp
+*.swo
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
