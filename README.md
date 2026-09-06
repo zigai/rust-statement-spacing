@@ -1,20 +1,18 @@
 # Rust Statement Spacing
 
 [![CI](https://github.com/zigai/rust-statement-spacing/actions/workflows/ci.yml/badge.svg)](https://github.com/zigai/rust-statement-spacing/actions/workflows/ci.yml)
-[![MSRV: 1.90+](https://img.shields.io/badge/MSRV-1.90%2B-orange.svg)](https://blog.rust-lang.org/2025/09/18/Rust-1.90.0.html)
+[![rustc: 1.90+](https://img.shields.io/badge/rustc-1.90%2B-orange?logo=rust)](Cargo.toml)
 [![Rust Edition: 2024](https://img.shields.io/badge/edition-2024-blue.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+[![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue.svg)](#license)
 
 A Rust linter and transactional autofixer for blank-line placement and statement grouping, inspired by [Go WSL](https://github.com/bombsimon/wsl). Keep related statements together and separate unrelated operations, control flow, and declarations with whitespace-only, compiler-verified fixes.
 
-- **Semantic statement grouping:** Groups statements using compiler-resolved bindings and dataflow relationships.
+- **Context-aware statement grouping:** Groups statements using compiler-resolved bindings and dataflow relationships.
 - **Comprehensive rules:** Checks bindings, expressions, control flow boundaries, early exits, `Result`/`Option` checks, and item declarations.
 - **Safe transactional fixes:** Applies edits inside an isolated snapshot, verifying changes against `cargo fmt` and a secondary compiler run before touching disk.
 - **Non-destructive:** Preserves comments, raw string literals, and macro interiors; rolls back cleanly if any check fails.
 
 ## Installation
-
-Install the Cargo subcommand directly from GitHub:
 
 ```sh
 cargo install --git https://github.com/zigai/rust-statement-spacing.git cargo-statement-spacing --locked
@@ -24,7 +22,7 @@ cargo install --git https://github.com/zigai/rust-statement-spacing.git cargo-st
 
 ### 1. Register the Dylint Library
 
-Add the statement-spacing lint library to your workspace or project `Cargo.toml`:
+Add the library to your workspace or project `Cargo.toml`:
 
 ```toml
 [workspace.metadata.dylint]
@@ -39,7 +37,6 @@ libraries = [
 cargo statement-spacing check
 ```
 
-Apply verified blank-line fixes:
 
 ```sh
 cargo statement-spacing fix --format-first
@@ -47,7 +44,7 @@ cargo statement-spacing fix --format-first
 
 ## Configuration
 
-Defaults work without a configuration file. To customize rules or thresholds, add a `dylint.toml` to your workspace root:
+To customize rules or thresholds, add a `dylint.toml` to your workspace root:
 
 ```toml
 [statement_spacing]
@@ -70,12 +67,12 @@ exclude = ["target/**", "vendor/**"]
 # Policy for adjacent let bindings and assignments:
 # - "consecutive": keep consecutive bindings together (default).
 # - "same-kind":   join only bindings of the same syntactic kind.
-# - "related":     join bindings with known semantic or dataflow relationships.
+# - "related":     join bindings with known context or dataflow relationships.
 # - "preserve":    retain existing author spacing without enforcing changes.
 bindings = "consecutive"
 
 # Policy for adjacent ordinary expression statements:
-# - "related":  group semantically related expressions together (default).
+# - "related":  group contextually related expressions together (default).
 # - "strict":   enforce blank line separation between ordinary expressions.
 # - "preserve": retain existing author spacing.
 expressions = "related"
