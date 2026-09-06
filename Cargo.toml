@@ -15,17 +15,17 @@ keywords = ["formatting", "lint", "rustfmt", "spacing"]
 categories = ["development-tools"]
 
 [workspace.dependencies]
-serde = { version = "=1.0.228", features = ["derive"] }
-serde_json = "=1.0.145"
-toml = "=0.9.8"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+toml = "=1.1.5"
 globset = "=0.4.18"
-ra_ap_syntax = "=0.0.297"
-clap = { version = "=4.5.48", features = ["derive", "env"] }
+ra_ap_syntax = "=0.0.307"
+clap = { version = "=4.6.6", features = ["derive", "env"] }
 tempfile = "=3.23.0"
-sha2 = "=0.10.9"
-rustix = { version = "=1.1.2", features = ["fs", "process"] }
-tokio = { version = "=1.47.1", features = ["rt-multi-thread", "process", "signal", "time", "io-util", "macros"] }
-windows-sys = { version = "=0.59.0", features = [
+sha2 = "=0.11.0"
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "process", "signal", "time", "io-util", "macros"] }
+windows-sys = { version = "=0.61.2", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
