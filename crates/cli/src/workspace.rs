@@ -306,6 +306,7 @@ pub(crate) fn validate_metadata(root: &Path, metadata: &Value) -> Result<()> {
             .map(str::to_owned)
             .ok_or_else(|| return failure("malformed Cargo metadata"));
     };
+    let root = canonical(root)?;
     if canonical(Path::new(&text(&metadata["workspace_root"])?))? != root {
         return Err(failure(
             "Cargo resolved a different workspace in the verification replica",
@@ -323,12 +324,12 @@ pub(crate) fn validate_metadata(root: &Path, metadata: &Value) -> Result<()> {
         .filter(|package| return members.contains(&package["id"]))
     {
         found = true;
-        relative_path(root, Path::new(&text(&package["manifest_path"])?))?;
+        relative_path(&root, Path::new(&text(&package["manifest_path"])?))?;
         for target in package["targets"]
             .as_array()
             .ok_or_else(|| return failure("malformed Cargo metadata"))?
         {
-            relative_path(root, Path::new(&text(&target["src_path"])?))?;
+            relative_path(&root, Path::new(&text(&target["src_path"])?))?;
         }
         for dependency in package["dependencies"]
             .as_array()
@@ -338,7 +339,7 @@ pub(crate) fn validate_metadata(root: &Path, metadata: &Value) -> Result<()> {
                 .as_str()
                 .filter(|path| return !path.is_empty())
             {
-                relative_path(root, Path::new(path))?;
+                relative_path(&root, Path::new(path))?;
             }
         }
     }

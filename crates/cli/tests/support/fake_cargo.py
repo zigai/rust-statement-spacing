@@ -20,7 +20,7 @@ root = Path.cwd()
 if "--manifest-path" in args:
     root = Path(args[args.index("--manifest-path") + 1]).resolve().parent
 source = root / "src/lib.rs"
-original = Path(os.environ.get("STATEMENT_SPACING_FAKE_ORIGINAL", str(root)))
+original = Path(os.environ.get("STATEMENT_SPACING_FAKE_ORIGINAL", str(root))).resolve()
 package_id = "path+file:///fixture#demo@0.1.0"
 
 

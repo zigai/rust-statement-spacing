@@ -72,6 +72,7 @@ impl Driver {
             .tempdir()?;
         let replica = temporary.path().join("workspace");
         workspace::copy_snapshot(&root, &replica, &original)?;
+        let replica = workspace::canonical(&replica)?;
         let mut args = self.formatter_cargo();
         args.extend([
             "metadata".into(),

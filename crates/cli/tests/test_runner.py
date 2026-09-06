@@ -68,7 +68,7 @@ class WorkspaceTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="statement-spacing-test-")
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         (self.root / "src").mkdir()
         self.source = self.root / "src/lib.rs"
         self.source.write_bytes(SOURCE)
