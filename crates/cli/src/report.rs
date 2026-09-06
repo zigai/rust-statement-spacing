@@ -4,6 +4,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
+#[cfg(unix)]
 use crate::transaction::atomic_json;
 use crate::{Options, Result};
 

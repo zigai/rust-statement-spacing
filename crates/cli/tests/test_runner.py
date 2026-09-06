@@ -17,11 +17,14 @@ if sys.platform == "win32":
     import msvcrt
 
 ROOT = Path(__file__).resolve().parents[3]
-BINARY = Path(
-    os.environ.get(
-        "STATEMENT_SPACING_BIN", ROOT / "target/debug/cargo-statement-spacing"
-    )
-).resolve()
+DEFAULT_BINARY = ROOT / "target/debug" / (
+    "cargo-statement-spacing.exe" if sys.platform == "win32" else "cargo-statement-spacing"
+)
+BINARY = Path(os.environ.get("STATEMENT_SPACING_BIN", DEFAULT_BINARY)).resolve()
+if sys.platform == "win32" and not BINARY.suffix:
+    candidate = BINARY.with_suffix(".exe")
+    if candidate.exists():
+        BINARY = candidate
 FAKE_CARGO = Path(__file__).parent / "support/fake_cargo.py"
 SOURCE = b"pub fn sample() {\n    let _a = 1;\n    std::hint::black_box(2);\n}\n"
 FIXED = SOURCE.replace(b"1;\n", b"1;\n\n")
@@ -82,6 +85,7 @@ class WorkspaceTest(unittest.TestCase):
     def invoke(self, command="fix", scenario="normal", extra=(), diagnostics=None):
         env = os.environ.copy()
         env.update(
+            PYTHON=sys.executable,
             STATEMENT_SPACING_CARGO=str(FAKE_CARGO),
             STATEMENT_SPACING_FAKE_SCENARIO=scenario,
             STATEMENT_SPACING_FAKE_ORIGINAL=str(self.root),

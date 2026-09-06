@@ -35,7 +35,7 @@ fn fsync_dir(directory: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn fsync_dir(_directory: &Path) -> Result<()> {
-    Ok(())
+    return Ok(());
 }
 
 fn atomic_bytes(path: &Path, data: &[u8], mode: u32) -> Result<()> {
@@ -168,7 +168,7 @@ pub(crate) fn workspace_lock(root: &Path) -> Result<WorkspaceLock> {
         }
         return Err(std::io::Error::from_raw_os_error(error_code as i32).into());
     }
-    Ok(WorkspaceLock { _file: file })
+    return Ok(WorkspaceLock { _file: file });
 }
 
 #[cfg(windows)]
@@ -185,7 +185,7 @@ fn number_of_links(path: &Path) -> Result<u32> {
     if success == 0 {
         return Err(std::io::Error::last_os_error().into());
     }
-    Ok(info.nNumberOfLinks)
+    return Ok(info.nNumberOfLinks);
 }
 
 fn journal_text<'entry>(entry: &'entry Value, key: &str) -> Result<&'entry str> {

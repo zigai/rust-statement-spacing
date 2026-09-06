@@ -50,7 +50,7 @@ fn file_mode(info: &fs::Metadata) -> u32 {
 
 #[cfg(windows)]
 fn file_mode(_info: &fs::Metadata) -> u32 {
-    0o644
+    return 0o644;
 }
 
 pub(crate) fn relative_path(root: &Path, name: &Path) -> Result<(PathBuf, String)> {
@@ -64,7 +64,7 @@ pub(crate) fn relative_path(root: &Path, name: &Path) -> Result<(PathBuf, String
     let relative = relative
         .to_str()
         .ok_or_else(|| return failure("workspace path is not UTF-8"))?
-        .to_owned();
+        .replace('\\', "/");
     return Ok((path, relative));
 }
 
@@ -148,8 +148,8 @@ pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>> {
     }
     let mut file = File::open(path)?;
     let mut data = Vec::new();
-    file.read_to_end(&mut data)?;
-    Ok(data)
+    io::copy(&mut file, &mut data)?;
+    return Ok(data);
 }
 
 pub(crate) fn scan(root: &Path, limit: u64) -> Result<Snapshot> {
@@ -207,7 +207,7 @@ pub(crate) fn scan(root: &Path, limit: u64) -> Result<Snapshot> {
             let name = relative
                 .to_str()
                 .ok_or_else(|| return failure("workspace path is not UTF-8"))?
-                .to_owned();
+                .replace('\\', "/");
             result.insert(
                 name,
                 FileState {

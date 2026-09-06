@@ -233,6 +233,20 @@ impl Driver {
         let result = executor.runtime.block_on(async {
             #[cfg(windows)]
             let job = JobObject::new()?;
+            #[cfg(windows)]
+            let mut command = if Path::new(program)
+                .extension()
+                .is_some_and(|ext| return ext.eq_ignore_ascii_case("py"))
+            {
+                let python_bin = env::var("PYTHON").unwrap_or_else(|_| return "python".to_string());
+                let mut cmd = Command::new(python_bin);
+                cmd.arg("-S");
+                cmd.arg(program);
+                cmd
+            } else {
+                Command::new(program)
+            };
+            #[cfg(not(windows))]
             let mut command = Command::new(program);
             command
                 .args(rest)
