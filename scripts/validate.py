@@ -99,120 +99,138 @@ def main():
             assert version.stdout.startswith("statement-spacing "), (
                 "installed consumer omitted version"
             )
-        if not options.portable_only:
-            run(["cargo", "+nightly-2025-09-18", "build", "--locked"], ROOT / "lint")
-            run([sys.executable, "scripts/validate_registration.py"])
-            # Real checks below use an installed consumer outside the source tree.
-            with tempfile.TemporaryDirectory(
-                prefix="statement-spacing-real-validation-"
-            ) as name:
-                temporary = Path(name)
-                fixture = temporary / "fixture"
-                shutil.copytree(ROOT / "tests/workspaces/basic", fixture)
-                install_root = temporary / "installed"
+            if not options.portable_only:
                 run(
-                    [
-                        "cargo",
-                        "+1.96.0",
-                        "install",
-                        "--path",
-                        ROOT / "crates/cli",
-                        "--locked",
-                        "--root",
-                        install_root,
-                    ]
-                )
-                source = fixture / "src/lib.rs"
-                before = source.read_bytes()
-                expected = (ROOT / "tests/fixtures/basic.fixed.rs").read_bytes()
-                base = [install_root / "bin/cargo-statement-spacing"]
-                arguments = [
-                    "--manifest-path",
-                    fixture / "Cargo.toml",
-                    "--library-path",
+                    ["cargo", "+nightly-2025-09-18", "build", "--release", "--locked"],
                     ROOT / "lint",
-                    "--format-toolchain",
-                    "1.96.0",
-                    "--json",
-                ]
-                run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
-                first = run(base + ["check", *arguments], fixture, expected=(1,))
-                first_report = json.loads(first.stdout)
-                assert any(
-                    f["rule"] == "statement_spacing_bindings"
-                    for f in first_report["findings"]
                 )
-                assert source.read_bytes() == before, "check modified source"
-                fixed = run(base + ["fix", *arguments], fixture)
-                assert json.loads(fixed.stdout)["verified"]["second_lint_run_clean"]
-                assert source.read_bytes() == expected, (
-                    "fixed output differs from explicit golden file"
-                )
-                # Hard requirement: use --check; do not write-format the candidate.
-                run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
-                again = run(base + ["fix", *arguments], fixture)
-                assert not json.loads(again.stdout)["changed_files"], (
-                    "fix not idempotent"
-                )
-                run(base + ["check", *arguments], fixture)
-                run(["cargo", "+1.96.0", "check", "--locked"], fixture)
-
-                # Suppression and expectation operate at actual compiler nodes.
-                for attribute in ("allow", "expect"):
-                    source.write_text(
-                        "#![deny(unfulfilled_lint_expectations)]\n"
-                        f'#[cfg_attr(dylint_lib = "statement_spacing", {attribute}(statement_spacing_bindings))]\n'
-                        + before.decode(),
-                        encoding="utf-8",
-                    )
-                    run(["cargo", "+1.96.0", "fmt", "--all"], fixture)  # baseline only
-                    run(base + ["check", *arguments], fixture)
-
-                # Fail closed on invalid user configuration.
-                (fixture / "dylint.toml").write_text(
-                    '[statement_spacing.grouping]\nexpressions="typo"\n'
-                )
-                run(base + ["check", *arguments], fixture, expected=(2,))
-
-                # Native Dylint --fix path, independently of the verified wrapper.
-                (fixture / "dylint.toml").write_text("[statement_spacing]\n")
-                source.write_bytes(before)
-                run(["git", "init", "-q"], fixture)
-                run(["git", "add", "."], fixture)
-                run(
-                    [
-                        "git",
-                        "-c",
-                        "user.name=Statement spacing fixture",
-                        "-c",
-                        "user.email=fixture@example.invalid",
-                        "commit",
-                        "-qm",
-                        "fixture baseline",
-                    ],
-                    fixture,
-                )
-                env = os.environ.copy()
-                env["CARGO_TARGET_DIR"] = str(temporary / "native-target")
-                run(
-                    [
-                        "cargo",
-                        "dylint",
-                        "--path",
+                run([sys.executable, "scripts/validate_registration.py"])
+                # Real checks below use an installed consumer outside the source tree.
+                with tempfile.TemporaryDirectory(
+                    prefix="statement-spacing-real-validation-"
+                ) as name:
+                    temporary = Path(name)
+                    fixture = temporary / "fixture"
+                    shutil.copytree(ROOT / "tests/workspaces/basic", fixture)
+                    source = fixture / "src/lib.rs"
+                    before = source.read_bytes()
+                    expected = (ROOT / "tests/fixtures/basic.fixed.rs").read_bytes()
+                    base = [installed]
+                    arguments = [
+                        "--manifest-path",
+                        fixture / "Cargo.toml",
+                        "--library-path",
                         ROOT / "lint",
-                        "--fix",
-                        "--",
-                        "--all-targets",
-                        "--locked",
-                    ],
-                    fixture,
-                    env=env,
-                )
-                assert source.read_bytes() == expected, (
-                    "native Dylint fix differs from golden output"
-                )
-                run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
-                report["golden_sha256"] = hashlib.sha256(expected).hexdigest()
+                        "--format-toolchain",
+                        "1.96.0",
+                        "--json",
+                    ]
+                    run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
+                    first = run(base + ["check", *arguments], fixture, expected=(1,))
+                    first_report = json.loads(first.stdout)
+                    assert any(
+                        f["rule"] == "statement_spacing_bindings"
+                        for f in first_report["findings"]
+                    )
+                    assert source.read_bytes() == before, "check modified source"
+                    fixed = run(base + ["fix", *arguments], fixture)
+                    assert json.loads(fixed.stdout)["verified"]["second_lint_run_clean"]
+                    assert source.read_bytes() == expected, (
+                        "fixed output differs from explicit golden file"
+                    )
+                    # Hard requirement: use --check; do not write-format the candidate.
+                    run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
+                    again = run(base + ["fix", *arguments], fixture)
+                    assert not json.loads(again.stdout)["changed_files"], (
+                        "fix not idempotent"
+                    )
+                    run(base + ["check", *arguments], fixture)
+                    run(["cargo", "+1.96.0", "check", "--locked"], fixture)
+
+                    # Suppression and expectation operate at actual compiler nodes.
+                    for attribute in ("allow", "expect"):
+                        source.write_text(
+                            "#![deny(unfulfilled_lint_expectations)]\n"
+                            f'#[cfg_attr(dylint_lib = "statement_spacing", {attribute}(statement_spacing_bindings))]\n'
+                            + before.decode(),
+                            encoding="utf-8",
+                        )
+                        run(["cargo", "+1.96.0", "fmt", "--all"], fixture)  # baseline only
+                        run(base + ["check", *arguments], fixture)
+
+                    # Fail closed on invalid user configuration.
+                    (fixture / "dylint.toml").write_text(
+                        '[statement_spacing.grouping]\nexpressions="typo"\n'
+                    )
+                    run(base + ["check", *arguments], fixture, expected=(2,))
+
+                    # Native Dylint --fix path, independently of the verified wrapper.
+                    (fixture / "dylint.toml").write_text("[statement_spacing]\n")
+                    source.write_bytes(before)
+                    run(["git", "init", "-q"], fixture)
+                    run(["git", "add", "."], fixture)
+                    run(
+                        [
+                            "git",
+                            "-c",
+                            "user.name=Statement spacing fixture",
+                            "-c",
+                            "user.email=fixture@example.invalid",
+                            "commit",
+                            "-qm",
+                            "fixture baseline",
+                        ],
+                        fixture,
+                    )
+                    prebuilt_so = next(
+                        (
+                            p
+                            for p in (
+                                *(ROOT / "lint/target/release").glob("libstatement_spacing@*"),
+                                *(ROOT / "lint/target/dylint/libraries").glob(
+                                    "*/release/libstatement_spacing@*"
+                                ),
+                            )
+                            if p.is_file() and p.suffix in (".so", ".dylib", ".dll")
+                        ),
+                        None,
+                    )
+                    if prebuilt_so:
+                        run(
+                            [
+                                "cargo",
+                                "dylint",
+                                "--lib-path",
+                                prebuilt_so,
+                                "--fix",
+                                "--",
+                                "--all-targets",
+                                "--locked",
+                            ],
+                            fixture,
+                        )
+                    else:
+                        env = os.environ.copy()
+                        env["CARGO_TARGET_DIR"] = str(temporary / "native-target")
+                        run(
+                            [
+                                "cargo",
+                                "dylint",
+                                "--path",
+                                ROOT / "lint",
+                                "--fix",
+                                "--",
+                                "--all-targets",
+                                "--locked",
+                            ],
+                            fixture,
+                            env=env,
+                        )
+                    assert source.read_bytes() == expected, (
+                        "native Dylint fix differs from golden output"
+                    )
+                    run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
+                    report["golden_sha256"] = hashlib.sha256(expected).hexdigest()
         report["status"] = "passed"
         return 0
     except (OSError, RuntimeError, AssertionError, ValueError) as error:

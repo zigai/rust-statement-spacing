@@ -31,6 +31,12 @@ def main():
     parser.add_argument(
         "--report", type=Path, default=ROOT / "validation-output/registration.json"
     )
+    parser.add_argument(
+        "--target-dir",
+        type=Path,
+        default=None,
+        help="Target directory for Dylint library build artifacts",
+    )
     options = parser.parse_args()
     report = {"kind": "compiler-lint-registration", "commands": []}
 
@@ -68,7 +74,7 @@ def main():
             env = os.environ.copy()
             env.pop("DYLINT_RUSTFLAGS", None)
             env.pop("DYLINT_LIST", None)
-            target = temporary / "target"
+            target = (options.target_dir or (library / "target")).resolve()
             env["CARGO_TARGET_DIR"] = str(target)
             listing = run(["cargo", "dylint", "list", "--path", library], fixture, env)
             registered = {
@@ -87,8 +93,16 @@ def main():
                 for path in target.glob(
                     "dylint/libraries/*/release/*statement_spacing@*"
                 )
-                if path.suffix in (".so", ".dylib") and path.is_file()
+                if path.suffix in (".so", ".dylib", ".dll") and path.is_file()
             ]
+            if not libraries:
+                libraries = [
+                    path
+                    for path in target.glob(
+                        "release/*statement_spacing@*"
+                    )
+                    if path.suffix in (".so", ".dylib", ".dll") and path.is_file()
+                ]
             if len(libraries) != 1:
                 raise RuntimeError(
                     "expected one freshly built statement_spacing library"

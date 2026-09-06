@@ -17,6 +17,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: rustup toolchain install 1.96.0 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.python }}
       - run: cargo build -p cargo-statement-spacing --locked
       - run: python -m unittest discover -s crates/cli/tests -v
       - run: cargo run -p source-policy --locked
@@ -28,6 +31,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            lint
       - run: cargo check --workspace --all-targets --all-features --locked
       - run: cargo test --workspace --all-features --locked --no-fail-fast
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
@@ -44,6 +52,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Cache Dylint binaries and drivers
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+            ~/.dylint_drivers
+          key: dylint-${{ runner.os }}-5.0.0-nightly-2025-09-18
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            lint
       - run: bash scripts/bootstrap.sh
       - run: python3 scripts/validate.py
       - uses: actions/upload-artifact@v4
@@ -62,6 +83,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
       - run: cargo build -p cargo-statement-spacing --locked
       - run: cargo test --workspace --locked
       - run: python -m unittest discover -s crates/cli/tests -v
