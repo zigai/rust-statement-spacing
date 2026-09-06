@@ -354,9 +354,10 @@ fn validate_manifest_value(path: &Path, value: &toml::Value) -> Result<()> {
         toml::Value::Table(table) => {
             for (key, child) in table {
                 if matches!(key.as_str(), "path" | "build")
-                    && let Some(name) = child
-                        .as_str()
-                        .filter(|name| return Path::new(name).is_absolute())
+                    && let Some(name) = child.as_str().filter(|name| {
+                        let path = Path::new(name);
+                        return path.is_absolute() || path.has_root();
+                    })
                 {
                     return Err(failure(format!(
                         "absolute manifest path cannot be relocated safely: {}: {name}",
