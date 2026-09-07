@@ -51,7 +51,7 @@ option_enum!(
     Overflow, WholeGroup,
     /// Retain only a bounded related suffix.
     RelatedSuffix => "related-suffix",
-    /// Separate the complete setup group when it exceeds the limit.
+    /// Separate the complete setup group, retaining a bounded fresh-accumulator suffix.
     WholeGroup => "whole-group");
 option_enum!(
     /// Scope of reads used to associate setup with control flow.
@@ -70,16 +70,16 @@ option_enum!(
     /// Retain existing spacing for this category.
     Preserve => "preserve");
 option_enum!(
-    /// Treatment of consecutive short exiting guards.
+    /// Treatment of short guards ending in an exit or try operation.
     GuardChain, Allow,
-    /// Permit guards to remain adjacent.
+    /// Permit guards to remain adjacent to following code.
     Allow => "allow",
-    /// Apply normal separation between guards.
+    /// Apply normal block separation after guards.
     Separate => "separate");
 option_enum!(
     /// Spacing policy for a block's final value.
     Tail, Smart,
-    /// Consider block size and immediate producer relationships.
+    /// Consider block size, completion values, guards, and immediate producers.
     Smart => "smart",
     /// Require separation before the tail value.
     AlwaysSeparate => "always-separate",
@@ -189,9 +189,9 @@ impl Default for Grouping {
 pub struct ControlFlow {
     /// Whether to separate after standalone blocks; defaults to separate.
     pub after_block: Separation,
-    /// Whether adjacent short guards may stay compact; defaults to allow.
+    /// Whether short guards may stay compact with following code; defaults to allow.
     pub guard_chain: GuardChain,
-    /// Keep a block with a following operation on the same receiver; defaults to true.
+    /// Keep related block continuations and unsafe initialization sequences compact; defaults to true.
     pub related_continuation: bool,
     /// Keep known mutations and empty for-loop drains in one cleanup phase; defaults to true.
     pub compact_cleanup: bool,
@@ -212,7 +212,7 @@ impl Default for ControlFlow {
 #[serde(default, deny_unknown_fields)]
 /// Spacing of explicit exits and final block values.
 pub struct Exits {
-    /// Direct executable-unit threshold for a short block; defaults to 2.
+    /// Direct executable-unit threshold for a short block; defaults to 4.
     pub short_block_max_statements: usize,
     /// Tail-value spacing policy; defaults to smart.
     pub tail: Tail,
@@ -223,7 +223,7 @@ pub struct Exits {
 impl Default for Exits {
     fn default() -> Self {
         return Self {
-            short_block_max_statements: 2,
+            short_block_max_statements: 4,
             tail: Tail::Smart,
             attached_loop_exit: true,
         };

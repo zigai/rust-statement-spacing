@@ -102,7 +102,16 @@ pub(crate) fn unit_kind(node: &SyntaxNode) -> UnitKind {
         | SyntaxKind::WHILE_EXPR
         | SyntaxKind::LOOP_EXPR
         | SyntaxKind::MATCH_EXPR => return UnitKind::Control,
-        SyntaxKind::BLOCK_EXPR => return UnitKind::Block,
+        SyntaxKind::BLOCK_EXPR => {
+            if expression.children_with_tokens().any(|child| {
+                return child
+                    .as_token()
+                    .is_some_and(|token| return token.kind() == SyntaxKind::UNSAFE_KW);
+            }) {
+                return UnitKind::UnsafeBlock;
+            }
+            return UnitKind::Block;
+        }
         SyntaxKind::RETURN_EXPR | SyntaxKind::BREAK_EXPR | SyntaxKind::CONTINUE_EXPR => {
             return UnitKind::Exit;
         }
@@ -254,8 +263,11 @@ pub(crate) fn guard(expression: &SyntaxNode) -> bool {
         return false;
     };
     let units: Vec<_> = list.children().filter(is_unit).collect();
-    let [first_unit] = units.as_slice() else {
+    if !(1..=2).contains(&units.len()) {
         return false;
-    };
-    return unit_kind(first_unit) == UnitKind::Exit;
+    }
+    return units.last().is_some_and(|last| {
+        return unit_kind(last) == UnitKind::Exit
+            || expression_node(last).kind() == SyntaxKind::TRY_EXPR;
+    });
 }

@@ -353,3 +353,217 @@ fn terminal_widget_block(ui: &mut Ui, source: &str) {
         }
     });
 }
+
+fn completion_returns(values: &mut Vec<u32>) -> Result<(), &'static str> {
+    values.push(1);
+    values.push(2);
+    return Ok(());
+}
+
+fn completion_closure(values: &mut Vec<u32>) {
+    let _ = || -> Result<(), &'static str> {
+        values.push(1);
+        values.push(2);
+        Ok(())
+    };
+}
+
+fn guard_return(output: std::process::Output) -> Option<String> {
+    if !output.status.success() {
+        return None;
+    }
+    return String::from_utf8(output.stdout).ok();
+}
+
+fn prefix_lengths(needle: &[u8], prefix_lengths: &mut [usize], mut matched: usize) {
+    for index in 1..needle.len() {
+        let byte = needle[index];
+        while matched > 0 && needle[matched] != byte {
+            matched = prefix_lengths[matched - 1];
+        }
+        if needle[matched] == byte {
+            matched += 1;
+        }
+        prefix_lengths[index] = matched;
+    }
+}
+
+fn polling(pid_path: &std::path::Path, deadline: std::time::Instant) -> std::io::Result<String> {
+    while !pid_path.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let recorded_pid = std::fs::read_to_string(pid_path)?;
+    return Ok(recorded_pid);
+}
+
+unsafe extern "C" {
+    fn fill_value(value: *mut std::ffi::c_void) -> i32;
+}
+
+fn check_status(status: i32) -> Result<(), i32> {
+    if status != 0 {
+        return Err(status);
+    }
+    Ok(())
+}
+
+fn ffi_output() -> Result<u32, i32> {
+    let mut value = 0_u32;
+
+    // SAFETY: value is live and writable for the duration of the call; the
+    // fixture's external contract accepts an aligned u32 output pointer.
+    check_status(unsafe { fill_value((&raw mut value).cast::<std::ffi::c_void>()) })?;
+    return Ok(value);
+}
+
+fn borrowed_output() -> u32 {
+    let mut value = 0;
+
+    std::mem::swap(&mut value, &mut 3);
+    return value;
+}
+
+fn completion_none(values: &mut Vec<u32>) -> Option<u32> {
+    values.push(1);
+    values.push(2);
+    return None;
+}
+
+fn completion_true(values: &mut Vec<u32>) -> bool {
+    values.push(1);
+    values.push(2);
+    return true;
+}
+
+fn completion_error(values: &mut Vec<u32>) -> Result<(), &'static str> {
+    values.push(1);
+    values.push(2);
+    return Err("finished");
+}
+
+fn immutable_address_is_not_an_output(value: u32) -> u32 {
+    black_box(1);
+    black_box(2);
+    black_box(3);
+    black_box(&raw const value);
+
+    return value;
+}
+
+fn deferred_address_is_not_an_output(mut value: u32) -> u32 {
+    black_box(1);
+    black_box(2);
+    black_box(3);
+
+    let _fill_later = || &raw mut value;
+
+    return value;
+}
+
+fn mutable_method_return() -> Vec<u8> {
+    let mut json = b"{}".to_vec();
+    json.reserve(16);
+    json.shrink_to_fit();
+    json.push(b'\n');
+    return json;
+}
+
+fn truncate_return(mut output: Vec<u8>, written: usize) -> Vec<u8> {
+    output.reserve(16);
+    output.push(0);
+    output.push(0);
+    output.truncate(written);
+    return output;
+}
+
+fn write_paths(
+    directory: &std::path::Path,
+    schemas: &[String],
+) -> std::io::Result<Vec<std::path::PathBuf>> {
+    schemas
+        .iter()
+        .map(|schema| {
+            let path = directory.join(schema);
+            std::fs::write(&path, schema).map_err(|error| error)?;
+            return Ok(path);
+        })
+        .collect()
+}
+
+fn try_guard(first: i32) -> Result<Vec<u8>, i32> {
+    if first != 0 {
+        check_status(first)?;
+    }
+    let output = Vec::new();
+    return Ok(output);
+}
+
+fn logging_guard(first: i32) -> Result<Vec<u8>, i32> {
+    if first != 0 {
+        eprintln!("operation failed: {first}");
+        return Err(first);
+    }
+    let output = Vec::new();
+    return Ok(output);
+}
+
+unsafe extern "C" {
+    fn configure_encoder(encoder: *mut std::ffi::c_void, option: usize);
+}
+
+fn ffi_initialization(encoder: *mut std::ffi::c_void) {
+    let encoder = black_box(encoder);
+    // SAFETY: this compile-only fixture assumes encoder is a live handle
+    // accepted by configure_encoder throughout this function.
+    unsafe {
+        configure_encoder(encoder, 0);
+    }
+    let option_as_alt = 0;
+    // SAFETY: encoder remains live and option_as_alt is a supported option.
+    unsafe {
+        configure_encoder(encoder, option_as_alt);
+    }
+    let mut encoded = std::ptr::null_mut::<u8>();
+    black_box(&mut encoded);
+}
+
+fn accumulated_schemas(entries: &[String]) {
+    let directory = entries;
+    let generated = directory.to_vec();
+    let registered = generated.len();
+
+    let mut checked_in = std::collections::BTreeSet::new();
+    for entry in directory {
+        checked_in.insert(entry.clone());
+    }
+    black_box((registered, checked_in));
+}
+
+fn cache_and_return(last_snapshot: &mut Option<Vec<u8>>, mut state: Vec<u8>) -> Option<Vec<u8>> {
+    state.reserve(16);
+    state.push(1);
+    state.push(2);
+
+    *last_snapshot = Some(state.clone());
+    return Some(state);
+}
+
+fn validate_registry(registry: &[&str]) -> Result<(), &'static str> {
+    let mut filenames = std::collections::BTreeSet::new();
+    for filename in registry {
+        if !filenames.insert(filename) {
+            return Err("duplicate filename");
+        }
+    }
+    return Ok(());
+}
+
+fn validation_loop_tail(registry: &[&str]) -> Result<(), &'static str> {
+    let mut filenames = std::collections::BTreeSet::new();
+    for filename in registry {
+        if !filenames.insert(filename) {
+            return Err("duplicate filename");
+        }
+    }
+    Ok(())
+}

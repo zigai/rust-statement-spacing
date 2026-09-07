@@ -63,6 +63,7 @@ pub(super) fn apply(
             }
             let mut needed = control_inputs(&unit.facts, config.grouping.use_in);
             let mut accepted_start = control;
+            let mut accumulator_start = control;
             let mut unknown = false;
             for candidate in (group_start..control).rev() {
                 let Some(setup) = list.units.get(candidate) else {
@@ -90,6 +91,23 @@ pub(super) fn apply(
                             &unit.facts.mutating_receivers,
                             config.grouping.self_fields,
                         ));
+                // A bounded suffix of fresh accumulators belongs to the loop
+                // that fills it, even when earlier bindings form a larger group.
+                // Mutation operations alone are not fresh initializations.
+                if initializes_updated_state
+                    && candidate + 1 == accumulator_start
+                    && (intersects(
+                        &setup.facts.definitions,
+                        &unit.facts.writes,
+                        config.grouping.self_fields,
+                    ) || intersects(
+                        &setup.facts.definitions,
+                        &unit.facts.mutating_receivers,
+                        config.grouping.self_fields,
+                    ))
+                {
+                    accumulator_start = candidate;
+                }
                 if config.grouping.same_receiver {
                     // Receiver-centred setup is a grouping heuristic, not a
                     // claim that the called method mutates its receiver.
@@ -124,10 +142,12 @@ pub(super) fn apply(
             let boundary = match config.grouping.overflow {
                 Overflow::WholeGroup => {
                     if related != total || total > limit {
-                        if mandatory == 0 {
+                        let retained = (control - accumulator_start).min(limit).max(mandatory);
+                        if retained == 0 {
                             Some(gap)
                         } else {
-                            (atomic_start > group_start).then_some(atomic_start.saturating_sub(1))
+                            let start = control - retained;
+                            (start > group_start).then_some(start.saturating_sub(1))
                         }
                     } else {
                         None

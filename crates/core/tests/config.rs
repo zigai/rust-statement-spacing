@@ -8,7 +8,7 @@ fn default_settings() {
     assert!(c.enabled().has(Rule::Bindings));
     assert!(!c.enabled().has(Rule::Layout));
     assert_eq!(c.grouping.max_before_control, 1);
-    assert_eq!(c.exits.short_block_max_statements, 2);
+    assert_eq!(c.exits.short_block_max_statements, 4);
 }
 
 #[test]

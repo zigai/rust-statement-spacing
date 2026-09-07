@@ -209,13 +209,13 @@ fn accumulator_remains_subject_to_group_overflow() -> Result<(), Box<dyn Error>>
         (
             Config::default(),
             both.clone(),
-            "setup;\n    setup;\n\n    control;",
+            "setup;\n\n    setup;\n    control;",
         ),
         (larger.clone(), both, "setup;\n    setup;\n    control;"),
         (
             larger,
             updates("state"),
-            "setup;\n    setup;\n\n    control;",
+            "setup;\n\n    setup;\n    control;",
         ),
         (
             suffix,

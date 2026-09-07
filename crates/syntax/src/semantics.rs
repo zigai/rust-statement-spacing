@@ -9,7 +9,7 @@ pub enum EventKind {
     Read,
     /// Introduction of a binding.
     Define,
-    /// Assignment to an existing place.
+    /// Assignment or exposure of a place through a mutable reference/raw address.
     Write,
     /// Use of a place as a method receiver.
     Receiver,

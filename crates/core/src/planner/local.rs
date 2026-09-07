@@ -2,7 +2,7 @@
 
 use super::decisions::{Decision, blocked, enabled, join, put, separate};
 use super::guard_pair;
-use crate::config::{Bindings, Config, Expressions, ImmediateCheck, Separation, Tail};
+use crate::config::{Bindings, Config, Expressions, GuardChain, ImmediateCheck, Separation, Tail};
 use crate::model::{ItemKind, Rule, RuleMask, UnitKind, UnitList};
 use crate::relations::{Relationship, direct_producer, intersects, relationship};
 
@@ -111,14 +111,50 @@ pub(super) fn apply(
             && a.facts.known
             && (!a.facts.writes.is_empty() || !a.facts.mutating_receivers.is_empty());
         let long = list.executable_count > config.exits.short_block_max_statements;
+        // A completion acknowledgment has no local producer to look for. Empty
+        // reads are meaningful only when extraction completed successfully.
+        let completion =
+            b.facts.known && b.facts.reads.is_empty() && !b.is_loop_exit && !b.is_bare_return;
+        let completion_exit = compact_policy
+            && completion
+            && (b.kind == UnitKind::Exit || (b.is_tail && b.kind == UnitKind::Expression))
+            && config.exits.tail == Tail::Smart;
+        // Saving a value and then returning it is one phase. Resolved reads
+        // remain affirmative evidence even when the destination is an alias
+        // whose write target cannot be resolved.
+        let cached_exit = compact_policy
+            && config.grouping.shared_inputs
+            && a.kind == UnitKind::Assignment
+            && b.facts.known
+            && intersects(&a.facts.reads, &b.facts.reads, config.grouping.self_fields);
+        let guard_continuation =
+            compact_policy && a.is_guard && config.control_flow.guard_chain == GuardChain::Allow;
+        let guard_exit = guard_continuation
+            && (b.kind == UnitKind::Exit || b.is_tail)
+            && config.exits.tail == Tail::Smart;
+        let data_continuation = compact_policy
+            && config.control_flow.related_continuation
+            && (b.kind.ordinary() || b.kind == UnitKind::Control || b.kind == UnitKind::Exit)
+            && (direct_producer(&a.facts, &b.facts, &config.grouping)
+                || (b.facts.known
+                    && config.grouping.shared_inputs
+                    && intersects(
+                        &a.facts.header_reads,
+                        &b.facts.reads,
+                        config.grouping.self_fields,
+                    )));
         let exit = b.kind == UnitKind::Exit
-            && long
             && !cleanup_exit
             && !attached_exit
             && match config.exits.tail {
                 Tail::AlwaysSeparate => true,
                 Tail::Preserve => false,
-                Tail::Smart => !direct_producer(&a.facts, &b.facts, &config.grouping),
+                Tail::Smart => {
+                    long && !completion
+                        && !cached_exit
+                        && !guard_exit
+                        && !direct_producer(&a.facts, &b.facts, &config.grouping)
+                }
             };
         let tail = b.is_tail
             && !cleanup_exit
@@ -127,7 +163,10 @@ pub(super) fn apply(
                 Tail::AlwaysSeparate => true,
                 Tail::Preserve => false,
                 Tail::Smart => {
-                    long && cohesive.get(i) != Some(&true)
+                    long && !completion
+                        && !cached_exit
+                        && !guard_exit
+                        && cohesive.get(i) != Some(&true)
                         && !direct_producer(&a.facts, &b.facts, &config.grouping)
                 }
             };
@@ -170,8 +209,18 @@ pub(super) fn apply(
             && b.is_empty_loop
             && a.facts.known
             && b.facts.known;
+        let unsafe_continuation = compact_policy
+            && config.control_flow.related_continuation
+            && a.kind == UnitKind::UnsafeBlock
+            && (b.kind.is_binding()
+                || b.kind == UnitKind::UnsafeBlock
+                || relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Related);
         if a.kind.ends_block()
+            && !completion_exit
             && !guards
+            && !guard_continuation
+            && !unsafe_continuation
+            && !data_continuation
             && !receiver_continuation
             && !drain_chain
             && !cleanup_exit

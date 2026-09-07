@@ -37,7 +37,13 @@ pub(crate) fn intersects(a: &BTreeSet<Place>, b: &BTreeSet<Place>, mode: SelfFie
 }
 
 pub(crate) fn outputs(facts: &Facts) -> BTreeSet<Place> {
-    return facts.definitions.union(&facts.writes).cloned().collect();
+    return facts
+        .definitions
+        .iter()
+        .chain(&facts.writes)
+        .chain(&facts.mutating_receivers)
+        .cloned()
+        .collect();
 }
 
 pub(crate) fn direct_producer(a: &Facts, b: &Facts, settings: &Grouping) -> bool {

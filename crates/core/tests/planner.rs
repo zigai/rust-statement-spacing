@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 use std::error::Error;
 
-use rust_statement_spacing_core::config::{Expressions, Overflow, SelfFields, Separation, Tail};
+use rust_statement_spacing_core::config::{
+    Expressions, GuardChain, Overflow, SelfFields, Separation, Tail,
+};
 use rust_statement_spacing_core::*;
 use std::fmt::Write as _;
 
@@ -913,7 +915,7 @@ fn valueless_loop_exit_attaches_to_assignment_in_long_block() -> Result<(), Box<
         &[0],
     );
     initial_model.lists[0].units[1].is_loop_exit = true;
-    initial_model.lists[0].executable_count = 4;
+    initial_model.lists[0].executable_count = 5;
     let mut config = Config::default();
     assert_eq!(
         apply_edits(&source, &plan(&config, &source, &initial_model)?.edits())?,
@@ -1050,6 +1052,7 @@ fn explicit_return_honors_producer_and_tail_policy() -> Result<(), Box<dyn Error
             &[0, 0],
         );
         let mut config = Config::default();
+        config.exits.short_block_max_statements = 2;
         config.exits.tail = tail;
         let result = plan(&config, &source, &initial)?;
         let output = apply_edits(&source, &result.edits())?;
@@ -1081,6 +1084,7 @@ fn plain_mutation_cleanup_honors_explicit_policy() -> Result<(), Box<dyn Error>>
         );
         initial.lists[0].units[2].is_bare_return = true;
         let mut config = Config::default();
+        config.exits.short_block_max_statements = 2;
         config.control_flow.compact_cleanup = enabled;
         config.exits.tail = tail;
         let result = plan(&config, &source, &initial)?;
@@ -1115,6 +1119,264 @@ fn receiver_group_and_tail_constraints_remain_idempotent() -> Result<(), Box<dyn
         config.exits.tail = tail;
         let result = plan(&config, &source, &initial)?;
         assert_eq!(apply_edits(&source, &result.edits())?, expected);
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn completion_exits_preserve_spacing_but_honor_explicit_separation() -> Result<(), Box<dyn Error>> {
+    for implicit in [false, true] {
+        for known in [false, true] {
+            for tail in [Tail::Smart, Tail::AlwaysSeparate, Tail::Preserve] {
+                let mut completion = facts(&[], &[]);
+                completion.known = known;
+                let (source, mut initial) = model(
+                    &[
+                        UnitKind::Let,
+                        UnitKind::Let,
+                        if implicit {
+                            UnitKind::Expression
+                        } else {
+                            UnitKind::Exit
+                        },
+                    ],
+                    &[facts(&["a"], &[]), facts(&["b"], &[]), completion],
+                    &[0, 0],
+                );
+                initial.lists[0].units[2].is_tail = implicit;
+                let mut config = Config::only(&[Rule::Exit]);
+                config.exits.short_block_max_statements = 2;
+                config.exits.tail = tail;
+                assert_eq!(
+                    count(&config, &source, &initial)?,
+                    usize::from(tail == Tail::AlwaysSeparate || (tail == Tail::Smart && !known))
+                );
+                initial.lists[0].gaps[1].blank_lines = 1;
+                assert_eq!(count(&config, &source, &initial)?, 0);
+            }
+        }
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn block_data_continuations_respect_identity_and_opt_outs() -> Result<(), Box<dyn Error>> {
+    for header in [false, true] {
+        for next_kind in [
+            UnitKind::Control,
+            UnitKind::Let,
+            UnitKind::Assignment,
+            UnitKind::Exit,
+        ] {
+            for related in [false, true] {
+                for enabled in [false, true] {
+                    let mut block = facts(&[], &[]);
+                    if header {
+                        block.header_reads = places(&["state"]);
+                    } else {
+                        block.writes = places(&["state"]);
+                    }
+                    let next = facts(&[], &[if related { "state" } else { "other" }]);
+                    let (source, initial) =
+                        model(&[UnitKind::Control, next_kind], &[block, next], &[0]);
+                    let mut config = Config::only(&[Rule::AfterBlock]);
+                    config.control_flow.related_continuation = enabled;
+                    assert_eq!(
+                        count(&config, &source, &initial)?,
+                        usize::from(!(related && enabled))
+                    );
+                    config.grouping.expressions = Expressions::Strict;
+                    assert_eq!(count(&config, &source, &initial)?, 1);
+                }
+            }
+        }
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn guard_and_final_return_share_a_phase() -> Result<(), Box<dyn Error>> {
+    let (source, mut initial) = model(
+        &[UnitKind::Let, UnitKind::Control, UnitKind::Exit],
+        &[
+            facts(&["setup"], &[]),
+            facts(&[], &["condition"]),
+            facts(&[], &["result"]),
+        ],
+        &[1, 0],
+    );
+    initial.lists[0].units[1].is_guard = true;
+    let mut config = Config::only(&[Rule::Exit, Rule::AfterBlock]);
+    assert_eq!(count(&config, &source, &initial)?, 0);
+    config.exits.tail = Tail::AlwaysSeparate;
+    assert_eq!(count(&config, &source, &initial)?, 1);
+    config.exits.tail = Tail::Smart;
+    config.control_flow.guard_chain = GuardChain::Separate;
+    assert_eq!(count(&config, &source, &initial)?, 1);
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn mutating_methods_produce_returned_values_even_in_long_blocks() -> Result<(), Box<dyn Error>> {
+    for mutable in [false, true] {
+        for returned in ["buffer", "other"] {
+            let mut operation = facts(&[], &["buffer"]);
+            operation.receivers = places(&["buffer"]);
+            if mutable {
+                operation.mutating_receivers = places(&["buffer"]);
+            }
+            let (source, initial) = model(
+                &[
+                    UnitKind::Let,
+                    UnitKind::Let,
+                    UnitKind::Let,
+                    UnitKind::Expression,
+                    UnitKind::Exit,
+                ],
+                &[
+                    facts(&["a"], &[]),
+                    facts(&["b"], &[]),
+                    facts(&["buffer"], &[]),
+                    operation,
+                    facts(&[], &[returned]),
+                ],
+                &[0, 0, 0, 0],
+            );
+            let mut config = Config::only(&[Rule::Exit]);
+            assert_eq!(
+                count(&config, &source, &initial)?,
+                usize::from(!(mutable && returned == "buffer"))
+            );
+            config.exits.tail = Tail::AlwaysSeparate;
+            assert_eq!(count(&config, &source, &initial)?, 1);
+        }
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn short_scope_returns_respect_threshold_and_tail_policy() -> Result<(), Box<dyn Error>> {
+    for length in [3, 4, 5] {
+        for implicit in [false, true] {
+            let mut kinds = vec![UnitKind::Let; length];
+            kinds[length - 1] = if implicit {
+                UnitKind::Expression
+            } else {
+                UnitKind::Exit
+            };
+            let mut semantics = vec![facts(&["unused"], &[]); length];
+            semantics[0] = facts(&["path"], &[]);
+            semantics[length - 1] = facts(&[], &["path"]);
+            let (source, mut initial) = model(&kinds, &semantics, &vec![0; length - 1]);
+            initial.lists[0].units[length - 1].is_tail = implicit;
+            let mut config = Config::only(&[Rule::Exit]);
+            assert_eq!(count(&config, &source, &initial)?, usize::from(length > 4));
+            config.exits.short_block_max_statements = 2;
+            assert_eq!(count(&config, &source, &initial)?, 1);
+            config.exits.tail = Tail::Preserve;
+            assert_eq!(count(&config, &source, &initial)?, 0);
+            config.exits.short_block_max_statements = 4;
+            config.exits.tail = Tail::AlwaysSeparate;
+            assert_eq!(count(&config, &source, &initial)?, 1);
+        }
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn caching_a_value_stays_with_its_return_even_with_an_unknown_write_target()
+-> Result<(), Box<dyn Error>> {
+    for known in [false, true] {
+        for input in ["state", "other"] {
+            for implicit in [false, true] {
+                let mut cache = facts(&[], &["state"]);
+                cache.known = known;
+                let (source, mut initial) = model(
+                    &[
+                        UnitKind::Let,
+                        UnitKind::Assignment,
+                        if implicit {
+                            UnitKind::Expression
+                        } else {
+                            UnitKind::Exit
+                        },
+                    ],
+                    &[facts(&["state"], &[]), cache, facts(&[], &[input])],
+                    &[1, 0],
+                );
+                initial.lists[0].units[2].is_tail = implicit;
+                let mut config = Config::only(&[Rule::Exit]);
+                config.exits.short_block_max_statements = 2;
+                assert_eq!(
+                    count(&config, &source, &initial)?,
+                    usize::from(input != "state")
+                );
+                config.grouping.shared_inputs = false;
+                assert_eq!(count(&config, &source, &initial)?, 1);
+                config.grouping.shared_inputs = true;
+                config.exits.tail = Tail::AlwaysSeparate;
+                assert_eq!(count(&config, &source, &initial)?, 1);
+                config.exits.tail = Tail::Smart;
+                config.grouping.expressions = Expressions::Strict;
+                assert_eq!(count(&config, &source, &initial)?, 1);
+            }
+        }
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn completion_after_a_loop_honors_explicit_policy() -> Result<(), Box<dyn Error>> {
+    for implicit in [false, true] {
+        let (source, mut initial) = model(
+            &[
+                UnitKind::Control,
+                if implicit {
+                    UnitKind::Expression
+                } else {
+                    UnitKind::Exit
+                },
+            ],
+            &[Facts::default(), facts(&[], &[])],
+            &[0],
+        );
+        initial.lists[0].units[1].is_tail = implicit;
+        let mut config = Config::only(&[Rule::Exit, Rule::AfterBlock]);
+        config.exits.short_block_max_statements = 0;
+        assert_eq!(count(&config, &source, &initial)?, 0);
+        config.exits.tail = Tail::AlwaysSeparate;
+        assert_eq!(count(&config, &source, &initial)?, 1);
+        config.exits.tail = Tail::Smart;
+        config.grouping.expressions = Expressions::Strict;
+        assert_eq!(count(&config, &source, &initial)?, 1);
     }
     return Ok(());
 }

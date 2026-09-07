@@ -157,7 +157,7 @@ pub struct Facts {
     pub definitions: BTreeSet<Place>,
     /// Places read by this unit, excluding deferred bodies.
     pub reads: BTreeSet<Place>,
-    /// Places assigned by this unit.
+    /// Places assigned or exposed through a mutable reference/raw address by this unit.
     pub writes: BTreeSet<Place>,
     /// Places used as method receivers.
     pub receivers: BTreeSet<Place>,
@@ -201,6 +201,8 @@ pub enum UnitKind {
     Control,
     /// Standalone scope block.
     Block,
+    /// Standalone unsafe scope, commonly wrapping an individual FFI operation.
+    UnsafeBlock,
     /// Explicit control-flow exit.
     Exit,
     /// Item declaration with its spacing category.
@@ -220,7 +222,7 @@ impl UnitKind {
     }
     /// Whether this is a standalone control-flow or scope block.
     pub fn ends_block(self) -> bool {
-        return matches!(self, Self::Control | Self::Block);
+        return matches!(self, Self::Control | Self::Block | Self::UnsafeBlock);
     }
     /// Whether ordinary binding/expression grouping applies.
     pub fn ordinary(self) -> bool {

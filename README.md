@@ -114,6 +114,8 @@ use_in = "header-or-first-body-statement"
 # How excess setup exceeding `max_before_control` is handled:
 # - "whole-group":    keep the setup group intact; separate it from control flow (default).
 # - "related-suffix": split off only a bounded related suffix before control flow.
+# Fresh accumulators immediately before a loop stay with it up to the setup
+# limit in either mode; any separator goes before those accumulator bindings.
 overflow = "whole-group"
 
 # When true, automatically removes blank lines between related statements.
@@ -127,15 +129,20 @@ join_related = false
 # - "preserve": retain existing spacing, allowing adjacent if/if let blocks.
 after_block = "separate"
 
-# Spacing between consecutive short exiting guards (e.g. `if !ok { return; }`):
-# - "allow":    permit guards to remain adjacent without blank lines (default).
-# - "separate": require blank lines between guards.
+# Spacing after short guards: one or two statements ending in return/break/
+# continue or a top-level `?`, with no else branch.
+# - "allow":    keep guards adjacent to following code (default).
+# - "separate": apply normal block separation after guards.
 guard_chain = "allow"
 
 # Keep receiver-centered groups together, including local buffers and change
 # flags consumed between operations. Existing blank lines remain boundaries;
 # unrelated operations and adjacent control blocks are not swept into a group.
 # Resolved header inputs remain evidence even when other facts are unknown.
+# Also keep block outputs and shared header inputs with their next consumer,
+# including scalar updates in algorithms and polling followed by a read.
+# Standalone unsafe operations may stay with following bindings, unsafe blocks,
+# and related operations, so individual FFI calls do not split initialization.
 related_continuation = true
 
 # Keep state updates and a final bare return together, with or without empty drains.
@@ -143,15 +150,24 @@ compact_cleanup = true
 
 
 [statement_spacing.exits]
-# Statement count threshold (0..1024) below which a block is considered short
+# Statement count threshold (0..1024) at or below which a block is considered short
 # and exempt from mandatory tail separation.
-short_block_max_statements = 2
+short_block_max_statements = 4
 
 # Spacing before final block value expressions / returns:
-# - "smart":           respects direct producers for tail values and explicit returns (default).
+# - "smart":           keeps direct producers, constant completion values, and
+#                      allowed guard-to-return pairs compact (default). Cache
+#                      assignments stay with the value returned, and completion
+#                      values stay attached after validation loops.
 # - "always-separate": always require a blank line before tail values.
 # - "preserve":        retain existing tail spacing.
 tail = "smart"
+
+# Mutable method receivers, borrows, and raw mutable addresses count as possible
+# producer outputs. The short-block threshold applies to "smart" tail spacing;
+# "always-separate" requires a blank line even in a short scope.
+# Existing optional blank lines are preserved; bare returns and valueless loop
+# exits use compact_cleanup and attached_loop_exit, respectively.
 
 # Keep a state update with its immediate valueless break/continue.
 attached_loop_exit = true

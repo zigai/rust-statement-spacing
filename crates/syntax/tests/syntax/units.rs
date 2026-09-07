@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use rust_statement_spacing_core::config::Tail;
+use rust_statement_spacing_core::config::{GuardChain, Tail};
 
 use super::*;
 
@@ -161,5 +161,80 @@ fn value_returning_controls_remain_tail_values() -> Result<(), Box<dyn Error>> {
     );
     config.exits.tail = Tail::Preserve;
     assert_eq!(structural(source, &config)?.0, source);
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn guards_accept_short_trailing_exits_and_try_operations() -> Result<(), Box<dyn Error>> {
+    for (body, expected) in [
+        ("return;", true),
+        ("check()?;", true),
+        ("check()?", true),
+        ("let result = check(); result?;", true),
+        ("log::warn!(\"failed\"); return None;", true),
+        ("let _ = sender.send(()); return Ok(());", true),
+        ("check()?; work();", false),
+        ("prepare(); log(); return;", false),
+        ("let later = || check()?;", false),
+        ("let value = check()?;", false),
+        ("work();", false),
+        ("", false),
+    ] {
+        let source = format!("fn f() {{ if condition {{ {body} }} }}");
+        let parsed = parse_source(&source, "2024")?;
+        let unit = parsed
+            .model
+            .lists
+            .iter()
+            .flat_map(|list| return &list.units)
+            .find(|unit| return unit.kind == UnitKind::Control)
+            .ok_or("missing if unit")?;
+        assert_eq!(unit.is_guard, expected, "{body}");
+    }
+    let source = "fn f() { if condition { check()?; } else { return; } }";
+    let parsed = parse_source(source, "2024")?;
+    assert!(
+        !parsed
+            .model
+            .lists
+            .iter()
+            .flat_map(|list| return &list.units)
+            .any(|unit| return unit.is_guard)
+    );
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn unsafe_operations_and_guard_checks_can_precede_bindings() -> Result<(), Box<dyn Error>> {
+    for source in [
+        "fn f() {\n    unsafe { configure(); }\n    let option = 0;\n    unsafe { set_option(option); }\n    let output = 0;\n}\n",
+        "fn f() {\n    if failed { check()?; }\n    let output = 0;\n}\n",
+        "fn f() {\n    if failed { log::warn!(\"failed\"); return; }\n    let output = 0;\n}\n",
+    ] {
+        let config = Config::only(&[Rule::AfterBlock]);
+        assert_eq!(structural(source, &config)?.0, source);
+        let mut strict_config = config.clone();
+        strict_config.grouping.expressions = Expressions::Strict;
+        assert!(!structural(source, &strict_config)?.1.findings.is_empty());
+        let mut separate = config;
+        separate.control_flow.related_continuation = false;
+        separate.control_flow.guard_chain = GuardChain::Separate;
+        assert!(!structural(source, &separate)?.1.findings.is_empty());
+    }
+    let plain = "fn f() {\n    { configure(); }\n    let option = 0;\n}\n";
+    assert!(
+        !structural(plain, &Config::only(&[Rule::AfterBlock]))?
+            .1
+            .findings
+            .is_empty()
+    );
     return Ok(());
 }

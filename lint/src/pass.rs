@@ -271,6 +271,14 @@ impl<'tcx> LateLintPass<'tcx> for Spacing {
             self.event(cx, expression.span, EventKind::Read, Some(place));
         }
         match expression.kind {
+            ExprKind::AddrOf(_, hir::Mutability::Mut, inner) => {
+                // Mutable references and raw addresses expose this place to
+                // mutation, including through nested FFI calls and pointer
+                // casts. This is a possible output, not proof of a write.
+                if let Some(place) = place(inner) {
+                    self.event(cx, inner.span, EventKind::Write, Some(place));
+                }
+            }
             ExprKind::Assign(left, _, _) | ExprKind::AssignOp(_, left, _) => {
                 if let Some(place) = place(left) {
                     self.event(cx, left.span, EventKind::Write, Some(place));
