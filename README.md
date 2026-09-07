@@ -68,12 +68,16 @@ exclude = ["target/**", "vendor/**"]
 # - "consecutive": keep consecutive bindings together (default).
 # - "same-kind":   join only bindings of the same syntactic kind.
 # - "related":     join bindings with known context or dataflow relationships.
+# - "multiline": separate visual phases; retain short dependent bindings,
+#                matching error adapters, resource pipelines, and mutations.
 # - "preserve":    retain existing author spacing without enforcing changes.
 bindings = "consecutive"
 
 # Policy for adjacent ordinary expression statements:
 # - "related":  group contextually related expressions together (default).
 # - "strict":   enforce blank line separation between ordinary expressions.
+# - "multiline": separate after multiline operations, retaining mutations with
+#                their next use, including multiline writer operations.
 # - "preserve": retain existing author spacing.
 expressions = "related"
 
@@ -133,6 +137,8 @@ after_block = "separate"
 # continue or a top-level `?`, with no else branch.
 # - "allow":    keep guards adjacent to following code (default).
 # - "separate": apply normal block separation after guards.
+# - "contextual": separate following work after if blocks; an immediately
+#                 following explicit return may remain adjacent.
 guard_chain = "allow"
 
 # Keep receiver-centered groups together, including local buffers and change
@@ -159,6 +165,8 @@ short_block_max_statements = 4
 #                      allowed guard-to-return pairs compact (default). Cache
 #                      assignments stay with the value returned, and completion
 #                      values stay attached after validation loops.
+# - "visual":          separate explicit completion phases, retaining compact
+#                      tuples, closures, and final guard or macro checks.
 # - "always-separate": always require a blank line before tail values.
 # - "preserve":        retain existing tail spacing.
 tail = "smart"
@@ -191,9 +199,22 @@ functions = "separate"
 # - "preserve": retain existing spacing.
 major_items = "separate"
 
-# Allow compact declarations (mod foo;, type aliases, consts) to remain adjacent.
+# Keep compact declarations within each family adjacent. Imports, constants/
+# statics, and other compact declarations (such as type aliases) form separate groups.
 compact_declarations = true
 ```
+
+For layout-led grouping, set `grouping.bindings = "multiline"` and
+`grouping.expressions = "multiline"`. These opt-in modes combine rustfmt's line
+wrapping with compiler-resolved dependencies, resource operations, and matching
+error adapters. `control_flow.guard_chain = "contextual"` separates code after
+if blocks except an immediately following explicit return; `exits.tail = "visual"`
+separates completion phases while retaining compact values. Mandatory Result/Option joins,
+rule suppression, and explicit settings retain precedence. Defaults are unchanged.
+
+Multiline grouping is a visual heuristic, not a reconstruction of author intent:
+parallel computations and semantic phase boundaries can still need manual blank
+lines. Optional existing blank lines remain preserved unless joining is enabled.
 
 ---
 
