@@ -135,7 +135,8 @@ class PreviewAndBaselineTests(WorkspaceTest):
         self.assertTrue(report["verified"]["second_lint_run_clean"])
         self.assertEqual(self.source.read_bytes(), SOURCE)
         applied = subprocess.run(
-            ["git", "apply", "--no-index", "-"], input=report["diff"],
+            ["git", "-c", "core.autocrlf=false", "apply", "--no-index", "-"],
+            input=report["diff"],
             text=True, cwd=self.root, capture_output=True, check=False,
         )
         self.assertEqual(applied.returncode, 0, applied.stderr)

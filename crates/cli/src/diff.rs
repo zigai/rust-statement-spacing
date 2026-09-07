@@ -106,7 +106,13 @@ mod tests {
             let patch = directory.path().join("preview.patch");
             fs::write(&patch, unified(name, before, after)?)?;
             let output = Command::new("git")
-                .args(["apply", "--no-index", "--whitespace=nowarn"])
+                .args([
+                    "-c",
+                    "core.autocrlf=false",
+                    "apply",
+                    "--no-index",
+                    "--whitespace=nowarn",
+                ])
                 .arg(&patch)
                 .current_dir(directory.path())
                 .output()?;
