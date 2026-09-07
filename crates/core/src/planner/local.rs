@@ -4,12 +4,13 @@ use super::decisions::{Decision, blocked, enabled, join, put, separate};
 use super::guard_pair;
 use crate::config::*;
 use crate::model::*;
-use crate::relations::{Relationship, direct_producer, relationship};
+use crate::relations::{Relationship, direct_producer, intersects, relationship};
 
 pub(super) fn apply(
     config: &Config,
     global_rules: RuleMask,
     list: &UnitList,
+    cohesive: &[bool],
     decisions: &mut [Option<Decision>],
 ) {
     for i in 0..list.gaps.len() {
@@ -95,13 +96,40 @@ pub(super) fn apply(
             }
             continue;
         }
+        let compact_policy = config.grouping.expressions != Expressions::Strict;
+        let cleanup_exit = compact_policy
+            && config.control_flow.compact_cleanup
+            && (a.is_empty_loop
+                || (a.kind.ordinary()
+                    && (!a.facts.writes.is_empty() || !a.facts.mutating_receivers.is_empty())))
+            && a.facts.known
+            && b.is_bare_return
+            && config.exits.tail != Tail::AlwaysSeparate;
+        let attached_exit = compact_policy
+            && config.exits.attached_loop_exit
+            && b.is_loop_exit
+            && a.facts.known
+            && (!a.facts.writes.is_empty() || !a.facts.mutating_receivers.is_empty());
         let long = list.executable_count > config.exits.short_block_max_statements;
-        let exit = b.kind == UnitKind::Exit && long;
-        let tail = b.is_tail
+        let exit = b.kind == UnitKind::Exit
+            && long
+            && !cleanup_exit
+            && !attached_exit
             && match config.exits.tail {
                 Tail::AlwaysSeparate => true,
                 Tail::Preserve => false,
-                Tail::Smart => long && !direct_producer(&a.facts, &b.facts, &config.grouping),
+                Tail::Smart => !direct_producer(&a.facts, &b.facts, &config.grouping),
+            };
+        let tail = b.is_tail
+            && !cleanup_exit
+            && !attached_exit
+            && match config.exits.tail {
+                Tail::AlwaysSeparate => true,
+                Tail::Preserve => false,
+                Tail::Smart => {
+                    long && cohesive.get(i) != Some(&true)
+                        && !direct_producer(&a.facts, &b.facts, &config.grouping)
+                }
             };
         if exit || tail {
             put(
@@ -116,7 +144,39 @@ pub(super) fn apply(
                 ),
             );
         }
-        if a.kind.ends_block() && !guards && config.control_flow.after_block == Separation::Separate
+        let receiver_continuation = compact_policy
+            && config.control_flow.related_continuation
+            && config.grouping.same_receiver
+            && b.kind.ordinary()
+            && !b.is_tail
+            && b.facts.known
+            && ((a.facts.known
+                && intersects(
+                    &a.facts.receivers,
+                    &b.facts.receivers,
+                    config.grouping.self_fields,
+                ))
+                // A resolved header input is affirmative evidence even if an
+                // unrelated macro or deferred operation makes the body unknown.
+                || (config.grouping.shared_inputs
+                    && intersects(
+                        &a.facts.header_reads,
+                        &b.facts.receivers,
+                        config.grouping.self_fields,
+                    )));
+        let drain_chain = compact_policy
+            && config.control_flow.compact_cleanup
+            && a.is_empty_loop
+            && b.is_empty_loop
+            && a.facts.known
+            && b.facts.known;
+        if a.kind.ends_block()
+            && !guards
+            && !receiver_continuation
+            && !drain_chain
+            && !cleanup_exit
+            && cohesive.get(i) != Some(&true)
+            && config.control_flow.after_block == Separation::Separate
         {
             put(
                 global_rules,
@@ -136,6 +196,9 @@ pub(super) fn apply(
             continue;
         }
         if !a.kind.ordinary() || !b.kind.ordinary() {
+            continue;
+        }
+        if cohesive.get(i) == Some(&true) {
             continue;
         }
         if a.kind.is_binding() && b.kind.is_binding() {

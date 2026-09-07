@@ -1,7 +1,7 @@
 //! Compiler-version-sensitive semantic extraction. No lexical name resolver.
 
 use rust_statement_spacing_core::Place;
-use rustc_hir::def::Res;
+use rustc_hir::def::{DefKind, Res};
 use rustc_hir::{self as hir, Expr, ExprKind, Pat, PatKind, QPath};
 use rustc_lint::LateContext;
 use rustc_middle::ty;
@@ -9,6 +9,38 @@ use rustc_span::Symbol;
 
 pub fn local_key(id: hir::HirId) -> String {
     format!("{id:?}")
+}
+
+/// Resolves only a direct source free call, transparently unwrapping `?`.
+pub fn direct_callee(cx: &LateContext<'_>, expression: &Expr<'_>) -> Option<String> {
+    match expression.kind {
+        ExprKind::DropTemps(inner) => direct_callee(cx, inner),
+        ExprKind::Match(scrutinee, _, hir::MatchSource::TryDesugar(_)) => {
+            // The scrutinee is compiler-generated Try::branch(original_operand).
+            // Never record that generated callee as the user's operation.
+            let ExprKind::Call(_, [operand]) = scrutinee.kind else {
+                return None;
+            };
+            direct_callee(cx, operand)
+        }
+        ExprKind::Call(callee, _) if !expression.span.from_expansion() => {
+            let ExprKind::Path(path) = &callee.kind else {
+                return None;
+            };
+            let Res::Def(DefKind::Fn, id) = cx.qpath_res(path, callee.hir_id) else {
+                return None;
+            };
+            Some(format!("{id:?}"))
+        }
+        _ => None,
+    }
+}
+
+pub fn mutable_receiver(cx: &LateContext<'_>, receiver: &Expr<'_>) -> bool {
+    return matches!(
+        cx.typeck_results().expr_ty_adjusted(receiver).kind(),
+        ty::Ref(_, _, hir::Mutability::Mut)
+    );
 }
 
 pub fn place(expression: &Expr<'_>) -> Option<Place> {

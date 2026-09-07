@@ -161,6 +161,10 @@ pub struct Facts {
     pub writes: BTreeSet<Place>,
     /// Places used as method receivers.
     pub receivers: BTreeSet<Place>,
+    /// Method receivers compiler-adjusted to a mutable reference, not proven assignment writes.
+    pub mutating_receivers: BTreeSet<Place>,
+    /// Compiler identities of direct source callees, excluding nested and deferred calls.
+    pub direct_callees: BTreeSet<String>,
     /// Places read in a control-flow header.
     pub header_reads: BTreeSet<Place>,
     /// Places read by the first executable body statement.
@@ -237,6 +241,12 @@ pub struct Unit {
     pub is_tail: bool,
     /// Whether this control-flow unit is a short exiting guard.
     pub is_guard: bool,
+    /// Whether this is a for loop with no executable body statements.
+    pub is_empty_loop: bool,
+    /// Whether this is a break or continue without a value.
+    pub is_loop_exit: bool,
+    /// Whether this is a return without a value.
+    pub is_bare_return: bool,
     /// The compiler has mapped this original syntax node to active source.
     pub active: bool,
     /// Whether this unit must preserve its existing spacing.

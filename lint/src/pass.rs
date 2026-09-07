@@ -13,7 +13,7 @@ use rustc_session::lint::Level;
 use rustc_span::{BytePos, FileName, Span};
 use sha2::{Digest, Sha256};
 
-use crate::hir::{inspection, local_key, pattern_check, place};
+use crate::hir::{direct_callee, inspection, local_key, mutable_receiver, pattern_check, place};
 use crate::spans::{self, DiagnosticAnchor};
 use crate::workspace::{self, Workspace};
 use crate::{
@@ -201,6 +201,11 @@ impl<'tcx> LateLintPass<'tcx> for Spacing {
     }
     fn check_stmt(&mut self, cx: &LateContext<'tcx>, stmt: &'tcx hir::Stmt<'tcx>) {
         self.anchor(cx, stmt.hir_id, stmt.span);
+        if let StmtKind::Expr(expression) | StmtKind::Semi(expression) = stmt.kind {
+            if let Some(callee) = direct_callee(cx, expression) {
+                self.event(cx, expression.span, EventKind::DirectCallee(callee), None);
+            }
+        }
         if let StmtKind::Let(local) = stmt.kind {
             if local.els.is_some() {
                 if let Some(init) = local.init {
@@ -219,7 +224,23 @@ impl<'tcx> LateLintPass<'tcx> for Spacing {
         }
     }
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expression: &'tcx hir::Expr<'tcx>) {
-        self.anchor(cx, expression.hir_id, expression.span);
+        // A written `for` is lowered to DropTemps(Match(ForLoopDesugar)).
+        // Its outer span carries a compiler expansion mark even at tail
+        // position, where no source statement supplies a second anchor.
+        // Recover only that wrapper's immediate call site: macro-generated
+        // loops must retain their macro context and remain ineligible.
+        let span = match expression.kind {
+            ExprKind::DropTemps(inner)
+                if matches!(
+                    inner.kind,
+                    ExprKind::Match(_, _, hir::MatchSource::ForLoopDesugar)
+                ) =>
+            {
+                expression.span.ctxt().outer_expn_data().call_site
+            }
+            _ => expression.span,
+        };
+        self.anchor(cx, expression.hir_id, span);
         if let Some(place) = place(expression) {
             self.event(cx, expression.span, EventKind::Read, Some(place));
         }
@@ -233,7 +254,13 @@ impl<'tcx> LateLintPass<'tcx> for Spacing {
             }
             ExprKind::MethodCall(_, receiver, _, _) => {
                 if let Some(place) = place(receiver) {
-                    self.event(cx, receiver.span, EventKind::Receiver, Some(place));
+                    let kind = if mutable_receiver(cx, receiver) {
+                        self.event(cx, receiver.span, EventKind::Receiver, Some(place.clone()));
+                        EventKind::MutatingReceiver
+                    } else {
+                        EventKind::Receiver
+                    };
+                    self.event(cx, receiver.span, kind, Some(place));
                 }
             }
             _ => {}

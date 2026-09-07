@@ -66,6 +66,16 @@ fn item_kind(node: &SyntaxNode) -> ItemKind {
                 return ItemKind::Compact;
             }
         }
+        SyntaxKind::MODULE => {
+            if node
+                .children()
+                .any(|child| return child.kind() == SyntaxKind::ITEM_LIST)
+            {
+                return ItemKind::Major;
+            } else {
+                return ItemKind::Compact;
+            }
+        }
         SyntaxKind::USE
         | SyntaxKind::CONST
         | SyntaxKind::STATIC

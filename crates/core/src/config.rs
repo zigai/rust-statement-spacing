@@ -40,15 +40,15 @@ option_enum!(
     /// Retain existing expression spacing.
     Preserve => "preserve");
 option_enum!(
-    /// How receiver field projections participate in relationships.
-    SelfFields, Distinct,
+    /// How `self` field projections participate in relationships.
+    SelfFields, Root,
     /// Treat sibling fields as distinct places.
     Distinct => "distinct",
-    /// Relate all projections of the same receiver root.
+    /// Relate all projections of the same `self` binding.
     Root => "root");
 option_enum!(
     /// How excess setup is separated from control flow.
-    Overflow, RelatedSuffix,
+    Overflow, WholeGroup,
     /// Retain only a bounded related suffix.
     RelatedSuffix => "related-suffix",
     /// Separate the complete setup group when it exceeds the limit.
@@ -142,11 +142,17 @@ pub struct Grouping {
     pub same_receiver: bool,
     /// Whether shared reads establish relatedness; defaults to true.
     pub shared_inputs: bool,
-    /// Receiver projection matching; defaults to distinct fields.
+    /// Whether accesses to the same aggregate establish relatedness; defaults to true.
+    pub same_object: bool,
+    /// Whether direct calls to the same resolved function establish relatedness; defaults to true.
+    pub same_callee: bool,
+    /// Whether consecutive assignments or mutable receiver calls relate; defaults to true.
+    pub consecutive_mutations: bool,
+    /// `self` projection matching; defaults to the same receiver root.
     pub self_fields: SelfFields,
     /// Maximum ordinary setup units attached to control flow; defaults to 1.
     pub max_before_control: usize,
-    /// How excess setup is split; defaults to a related suffix.
+    /// How excess setup is split; defaults to preserving the whole group.
     pub overflow: Overflow,
     /// Reads considered for setup; defaults to header and first body statement.
     pub use_in: UseIn,
@@ -161,16 +167,19 @@ impl Default for Grouping {
             expressions: Expressions::Related,
             same_receiver: true,
             shared_inputs: true,
-            self_fields: SelfFields::Distinct,
+            same_object: true,
+            same_callee: true,
+            consecutive_mutations: true,
+            self_fields: SelfFields::Root,
             max_before_control: 1,
-            overflow: Overflow::RelatedSuffix,
+            overflow: Overflow::WholeGroup,
             use_in: UseIn::HeaderOrFirstBodyStatement,
             join_related: false,
         };
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 /// Rules for standalone blocks and adjacent exiting guards.
 pub struct ControlFlow {
@@ -178,6 +187,21 @@ pub struct ControlFlow {
     pub after_block: Separation,
     /// Whether adjacent short guards may stay compact; defaults to allow.
     pub guard_chain: GuardChain,
+    /// Keep a block with a following operation on the same receiver; defaults to true.
+    pub related_continuation: bool,
+    /// Keep known mutations and empty for-loop drains in one cleanup phase; defaults to true.
+    pub compact_cleanup: bool,
+}
+
+impl Default for ControlFlow {
+    fn default() -> Self {
+        return Self {
+            after_block: Separation::Separate,
+            guard_chain: GuardChain::Allow,
+            related_continuation: true,
+            compact_cleanup: true,
+        };
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -188,6 +212,8 @@ pub struct Exits {
     pub short_block_max_statements: usize,
     /// Tail-value spacing policy; defaults to smart.
     pub tail: Tail,
+    /// Keep a state update with its immediate valueless break/continue; defaults to true.
+    pub attached_loop_exit: bool,
 }
 
 impl Default for Exits {
@@ -195,6 +221,7 @@ impl Default for Exits {
         return Self {
             short_block_max_statements: 2,
             tail: Tail::Smart,
+            attached_loop_exit: true,
         };
     }
 }

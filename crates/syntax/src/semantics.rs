@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use rust_statement_spacing_core::{ByteRange, Facts, Place, RuleMask};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 /// Compiler-resolved operation contributing to a unit relationship.
 pub enum EventKind {
     /// Read of a local place.
@@ -13,6 +13,10 @@ pub enum EventKind {
     Write,
     /// Use of a place as a method receiver.
     Receiver,
+    /// Receiver compiler-adjusted to a mutable reference.
+    MutatingReceiver,
+    /// Resolved identity of a direct source expression-statement call.
+    DirectCallee(String),
     /// Compiler-confirmed Result/Option inspection.
     Inspect,
     /// Operation whose effects could not be resolved.
@@ -95,10 +99,16 @@ impl SemanticIndex {
             ..Facts::default()
         };
         for event in &events {
+            if let EventKind::DirectCallee(callee) = &event.kind {
+                if event.range.start == range.start && range.end - event.range.end <= 1 {
+                    facts.direct_callees.insert(callee.clone());
+                }
+                continue;
+            }
             let Some(place) = &event.place else {
                 continue;
             };
-            match event.kind {
+            match &event.kind {
                 EventKind::Define => {
                     if declaration.is_some_and(|pat| return pat.contains(event.range)) {
                         facts.definitions.insert(place.clone());
@@ -133,6 +143,9 @@ impl SemanticIndex {
                 EventKind::Receiver => {
                     facts.receivers.insert(place.clone());
                 }
+                EventKind::MutatingReceiver => {
+                    facts.mutating_receivers.insert(place.clone());
+                }
                 EventKind::Inspect => {
                     if header.is_some_and(|h| return h.contains(event.range)) {
                         // Multiple inspected values are deliberately not a narrow pair.
@@ -144,7 +157,7 @@ impl SemanticIndex {
                         }
                     }
                 }
-                EventKind::Unknown => {}
+                EventKind::Unknown | EventKind::DirectCallee(_) => {}
             }
         }
         return facts;

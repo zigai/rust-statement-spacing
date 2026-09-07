@@ -68,6 +68,26 @@ fn make_unit(node: &SyntaxNode, semantics: Option<&SemanticIndex>) -> Unit {
         kind: category,
         is_tail: is_expression(node) && !is_item(node),
         is_guard: guard(&expression),
+        is_empty_loop: expression.kind() == SyntaxKind::FOR_EXPR
+            && expression.children().any(|child| {
+                return child.kind() == SyntaxKind::BLOCK_EXPR
+                    && control_body_start(&expression)
+                        .is_some_and(|start| return range(&child).start == start)
+                    && child.children().any(|list| {
+                        return list.kind() == SyntaxKind::STMT_LIST
+                            && !list.children().any(|node| return is_unit(&node));
+                    });
+            }),
+        is_loop_exit: matches!(
+            expression.kind(),
+            SyntaxKind::BREAK_EXPR | SyntaxKind::CONTINUE_EXPR
+        ) && !expression
+            .children()
+            .any(|node| return is_expression(&node)),
+        is_bare_return: expression.kind() == SyntaxKind::RETURN_EXPR
+            && !expression
+                .children()
+                .any(|node| return is_expression(&node)),
         active: anchor.is_some(),
         protected: protected(node),
         facts,

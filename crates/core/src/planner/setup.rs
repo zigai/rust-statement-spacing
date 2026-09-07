@@ -2,7 +2,7 @@
 
 use super::decisions::{Decision, blocked, effective_blank, enabled, put, separate};
 use super::guard_pair;
-use crate::config::{Config, Overflow};
+use crate::config::{Config, Expressions, Overflow, UseIn};
 use crate::model::{Rule, RuleMask, UnitKind, UnitList};
 use crate::relations::{control_inputs, intersects, outputs};
 
@@ -10,6 +10,7 @@ pub(super) fn apply(
     config: &Config,
     global_rules: RuleMask,
     list: &UnitList,
+    cohesive: &[bool],
     decisions: &mut [Option<Decision>],
 ) {
     // Monotone closure: setup splitting adds separators only. Reconsider affected
@@ -25,10 +26,21 @@ pub(super) fn apply(
                 continue;
             };
             if unit.kind != UnitKind::Control
+                || !gap_unit.kind.ordinary()
                 || !enabled(global_rules, unit, Rule::ControlFlow)
                 || blocked(list, gap)
                 || guard_pair(config, gap_unit, unit)
                 || effective_blank(list, decisions, gap) > 0
+                || cohesive.get(gap) == Some(&true)
+            {
+                continue;
+            }
+            if config.control_flow.compact_cleanup
+                && config.grouping.expressions != Expressions::Strict
+                && unit.is_empty_loop
+                && gap_unit.facts.known
+                && (!gap_unit.facts.writes.is_empty()
+                    || !gap_unit.facts.mutating_receivers.is_empty())
             {
                 continue;
             }
@@ -64,12 +76,28 @@ pub(super) fn apply(
                     break;
                 }
                 let mut provided = outputs(&setup.facts);
+                // Initializing state that the control body updates is setup even
+                // when the update is nested or follows another statement. Only
+                // affirmative non-deferred mutation facts extend the read scope;
+                // a later read or shared receiver alone is not enough. Keep this
+                // in the bounded setup scan, not an indivisible producer pair.
+                let initializes_updated_state = unit.facts.known
+                    && config.grouping.expressions != Expressions::Strict
+                    && config.grouping.use_in != UseIn::Header
+                    && (intersects(&provided, &unit.facts.writes, config.grouping.self_fields)
+                        || intersects(
+                            &provided,
+                            &unit.facts.mutating_receivers,
+                            config.grouping.self_fields,
+                        ));
                 if config.grouping.same_receiver {
                     // Receiver-centred setup is a grouping heuristic, not a
                     // claim that the called method mutates its receiver.
                     provided.extend(setup.facts.receivers.clone());
                 }
-                if !intersects(&provided, &needed, config.grouping.self_fields) {
+                if !initializes_updated_state
+                    && !intersects(&provided, &needed, config.grouping.self_fields)
+                {
                     break;
                 }
                 needed.extend(setup.facts.reads.clone());

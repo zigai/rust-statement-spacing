@@ -4,6 +4,7 @@ use crate::config::*;
 use crate::edits::{Edit, blank_line_replacement, validate_edits};
 use crate::model::*;
 mod decisions;
+mod groups;
 mod local;
 mod setup;
 
@@ -54,8 +55,9 @@ fn build_decisions(
     list: &UnitList,
 ) -> Vec<Option<Decision>> {
     let mut decisions = vec![None; list.gaps.len()];
-    local::apply(config, global_rules, list, &mut decisions);
-    setup::apply(config, global_rules, list, &mut decisions);
+    let cohesive = groups::cohesive(config, list);
+    local::apply(config, global_rules, list, &cohesive, &mut decisions);
+    setup::apply(config, global_rules, list, &cohesive, &mut decisions);
     local::cap_blank_lines(global_rules, list, &mut decisions);
     return decisions;
 }
