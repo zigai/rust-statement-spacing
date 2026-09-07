@@ -136,10 +136,12 @@ class PreviewAndBaselineTests(WorkspaceTest):
         self.assertEqual(self.source.read_bytes(), SOURCE)
         applied = subprocess.run(
             ["git", "-c", "core.autocrlf=false", "apply", "--no-index", "-"],
-            input=report["diff"],
-            text=True, cwd=self.root, capture_output=True, check=False,
+            input=report["diff"].encode("utf-8"),
+            cwd=self.root, capture_output=True, check=False,
         )
-        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(
+            applied.returncode, 0, applied.stderr.decode("utf-8", "replace")
+        )
         self.assertEqual(self.source.read_bytes(), FIXED)
         code, report = self.invoke(extra=("--dry-run", "--diff"))
         self.assertEqual(code, 0, report)
