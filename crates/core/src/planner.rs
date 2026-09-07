@@ -1,8 +1,8 @@
 //! One owner per boundary, with mandatory joins established before group splitting.
 
-use crate::config::*;
+use crate::config::{Config, GuardChain};
 use crate::edits::{Edit, blank_line_replacement, validate_edits};
-use crate::model::*;
+use crate::model::{ByteRange, Rule, RuleMask, SourceModel, Unit, UnitList};
 mod decisions;
 mod groups;
 mod local;

@@ -230,6 +230,10 @@ impl UnitKind {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// One direct source sibling and its compiler annotations.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "The public serialized source model exposes syntax predicates and compiler annotations as separate boolean fields."
+)]
 pub struct Unit {
     /// Syntax node including its attached attributes and documentation.
     pub range: ByteRange,

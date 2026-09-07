@@ -133,6 +133,10 @@ impl Default for Config {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 /// Statement relationship policy and control-flow setup limits.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Grouping heuristics are independently configurable boolean keys in the public configuration schema."
+)]
 pub struct Grouping {
     /// Binding policy; defaults to consecutive.
     pub bindings: Bindings,

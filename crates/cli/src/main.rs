@@ -29,6 +29,10 @@ pub(crate) fn failure(message: impl Into<String>) -> Error {
 #[derive(Parser)]
 #[command(name = "statement-spacing", bin_name = "cargo statement-spacing", version = VERSION,
     about = "Dylint blank-line checks and transactional, rustfmt-verified fixes.")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "These independent CLI switches control formatting, Cargo features, network access, and report output."
+)]
 pub(crate) struct Options {
     #[arg(value_parser = ["check", "fix", "recover"])]
     pub(crate) command: String,

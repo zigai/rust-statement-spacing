@@ -2,8 +2,8 @@
 
 use super::decisions::{Decision, blocked, enabled, join, put, separate};
 use super::guard_pair;
-use crate::config::*;
-use crate::model::*;
+use crate::config::{Bindings, Config, Expressions, ImmediateCheck, Separation, Tail};
+use crate::model::{ItemKind, Rule, RuleMask, UnitKind, UnitList};
 use crate::relations::{Relationship, direct_producer, intersects, relationship};
 
 pub(super) fn apply(
