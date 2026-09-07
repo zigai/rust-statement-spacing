@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -10,7 +9,6 @@ pub(crate) struct Driver {
     pub(crate) options: Options,
     pub(crate) report: Value,
     pub(crate) toolchain: Option<String>,
-    pub(crate) package_roots: BTreeMap<String, PathBuf>,
 }
 
 impl Driver {
@@ -24,7 +22,6 @@ impl Driver {
             options,
             report,
             toolchain,
-            package_roots: BTreeMap::new(),
         };
     }
 
@@ -37,6 +34,13 @@ impl Driver {
     pub(crate) fn execute(&mut self) -> Result<u8> {
         cargo::setup_cancellation()?;
         let limit = self.options.max_snapshot_mib * 1024 * 1024;
+        let exclusions = self
+            .options
+            .snapshot_exclude
+            .iter()
+            .map(|name| return workspace::safe_relative(name))
+            .collect::<Result<Vec<_>>>()?;
+        self.set_report("snapshot_exclusions", json!(exclusions));
         let root = self.locate()?;
         let _lock = transaction::workspace_lock(&root)?;
         if self.options.command == "recover" {
@@ -54,7 +58,7 @@ impl Driver {
             ));
         }
         workspace::reject_ancestor_config(&root)?;
-        workspace::validate_manifest_paths(&root)?;
+        workspace::validate_manifest_paths(&root, &exclusions)?;
         if !root.join("Cargo.lock").is_file() {
             return Err(failure(
                 "verified mode requires Cargo.lock; run cargo generate-lockfile first",
@@ -62,7 +66,7 @@ impl Driver {
         }
         let identity = self.identity(&root)?;
         self.set_report("formatter", identity.clone());
-        let original = workspace::scan(&root, limit)?;
+        let original = workspace::scan(&root, limit, &exclusions)?;
         self.set_report("source_fingerprint", source_fingerprint(&original)?.into());
         if !self.options.format_first {
             self.fmt(&root, false)?;
@@ -71,7 +75,7 @@ impl Driver {
             .prefix("statement-spacing-")
             .tempdir()?;
         let replica = temporary.path().join("workspace");
-        workspace::copy_snapshot(&root, &replica, &original)?;
+        workspace::copy_snapshot(&root, &replica, &original, &exclusions)?;
         let replica = workspace::canonical(&replica)?;
         let mut args = self.formatter_cargo();
         args.extend([
@@ -85,38 +89,12 @@ impl Driver {
         let metadata = self.run(args, &replica, None, true)?;
         let metadata: Value = serde_json::from_str(&metadata.stdout)?;
         workspace::validate_metadata(&replica, &metadata)?;
-        let packages = metadata
-            .get("packages")
-            .and_then(Value::as_array)
-            .ok_or_else(|| return failure("invalid Cargo metadata packages"))?;
-        let members = metadata
-            .get("workspace_members")
-            .and_then(Value::as_array)
-            .ok_or_else(|| return failure("invalid Cargo metadata workspace_members"))?;
-        for package in packages.iter().filter(|package| {
-            return package
-                .get("id")
-                .is_some_and(|id| return members.contains(id));
-        }) {
-            let id = package
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| return failure("invalid Cargo package id"))?;
-            let manifest = package
-                .get("manifest_path")
-                .and_then(Value::as_str)
-                .ok_or_else(|| return failure("invalid Cargo package manifest_path"))?;
-            let parent = Path::new(manifest)
-                .parent()
-                .ok_or_else(|| return failure("invalid Cargo package manifest_path"))?;
-            self.package_roots.insert(id.to_owned(), parent.to_owned());
-        }
         if self.options.format_first {
             self.fmt(&replica, true)?;
         }
-        let before_lint = workspace::scan(&replica, limit)?;
+        let before_lint = workspace::scan(&replica, limit, &exclusions)?;
         let first = self.lint(&replica, temporary.path(), "initial", &root)?;
-        workspace::assert_snapshot(&replica, &before_lint, limit)?;
+        workspace::assert_snapshot(&replica, &before_lint, limit, &exclusions)?;
         let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
         for finding in &first.findings {
             let rule = finding
@@ -136,7 +114,7 @@ impl Driver {
         }));
         cargo::check_interrupted()?;
         if self.options.command == "check" {
-            workspace::assert_snapshot(&root, &original, limit)?;
+            workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
             self.set_report(
                 "status",
                 if first.findings.is_empty() {
@@ -156,10 +134,10 @@ impl Driver {
             ));
         }
         protocol::apply(&replica, &first.edits)?;
-        let candidate = workspace::scan(&replica, limit)?;
+        let candidate = workspace::scan(&replica, limit, &exclusions)?;
         self.fmt(&replica, false)?;
         let second = self.lint(&replica, temporary.path(), "fixed", &root)?;
-        workspace::assert_snapshot(&replica, &candidate, limit)?;
+        workspace::assert_snapshot(&replica, &candidate, limit, &exclusions)?;
         if !second.findings.is_empty() || !second.edits.is_empty() {
             return Err(failure(
                 "candidate is not a lint fixed point; the complete transaction was rejected",
@@ -200,11 +178,11 @@ impl Driver {
             return self.fmt(&root, false);
         };
         if changed.is_empty() {
-            workspace::assert_snapshot(&root, &original, limit)?;
+            workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
             let mut final_check = final_check;
             final_check()?;
         } else {
-            transaction::commit(&root, &original, &changed, final_check, limit)?;
+            transaction::commit(&root, &original, &changed, final_check, limit, &exclusions)?;
         }
         self.set_report("changed_files", json!(changed.keys().collect::<Vec<_>>()));
         self.set_report(

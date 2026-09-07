@@ -199,26 +199,23 @@ class EditTests(WorkspaceTest):
                         diagnostics=json.dumps(diagnostic(name, 0, 0, "\n"))
                     )
 
-    def test_package_relative_and_unscoped_paths(self):
+    def test_workspace_relative_member_paths(self):
         member = self.root / "member"
         (member / "src").mkdir(parents=True)
         (member / "src/lib.rs").write_bytes(SOURCE)
         (member / "Cargo.toml").write_text(
             '[package]\nname="member"\nversion="0.1.0"\n'
         )
-        item = diagnostic("src/lib.rs", self.start, self.end, package="member-id")
+        item = diagnostic("member/src/lib.rs", self.start, self.end, package="member-id")
         code, report = self.invoke(
-            "check", scenario="multi-package", diagnostics=json.dumps(item)
+            scenario="multi-package", diagnostics=json.dumps(item)
         )
-        self.assertEqual(code, 1, report)
+        self.assertEqual(code, 0, report)
         self.assertEqual(
             [finding["file"] for finding in report["findings"]], ["member/src/lib.rs"]
         )
-        self.assertEqual((member / "src/lib.rs").read_bytes(), SOURCE)
-        item["package_id"] = None
-        self.assert_rejected(
-            command="check", scenario="multi-package", diagnostics=json.dumps(item)
-        )
+        self.assertEqual((member / "src/lib.rs").read_bytes(), FIXED)
+        self.assertEqual(self.source.read_bytes(), SOURCE)
 
 
 class SnapshotTests(WorkspaceTest):

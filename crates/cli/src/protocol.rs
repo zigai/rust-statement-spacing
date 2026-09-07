@@ -67,7 +67,6 @@ fn suggestions<'doc>(node: &'doc Value, proposals: &mut Vec<&'doc Value>) {
 pub(crate) fn collect_edits(
     root: &Path,
     lines: &str,
-    package_roots: &BTreeMap<String, PathBuf>,
 ) -> Result<(Vec<Value>, Vec<Edit>, Vec<String>)> {
     if lines.len() as u64 > MAX_JSON_BYTES {
         return Err(failure("Cargo JSON output exceeds the verification limit"));
@@ -113,28 +112,10 @@ pub(crate) fn collect_edits(
             }
             continue;
         }
+        // The pinned Cargo compiler runs from the workspace root. Diagnostic
+        // file names are relative to that directory, not to the package ID.
         let resolve_name = |name: &str| -> Result<(PathBuf, String)> {
-            let supplied = Path::new(name);
-            if supplied.is_absolute() {
-                return relative_path(root, supplied);
-            }
-            let scoped = event
-                .get("package_id")
-                .and_then(Value::as_str)
-                .and_then(|id| return package_roots.get(id));
-            let base = match scoped {
-                Some(base) => base.as_path(),
-                None if package_roots.is_empty() => root,
-                None if package_roots.len() == 1 => {
-                    package_roots.values().next().map_or(root, PathBuf::as_path)
-                }
-                None => {
-                    return Err(failure(
-                        "cannot resolve an unscoped relative diagnostic in a multi-package workspace",
-                    ));
-                }
-            };
-            return relative_path(root, &base.join(supplied));
+            return relative_path(root, Path::new(name));
         };
         let mut proposals = Vec::new();
         suggestions(diagnostic, &mut proposals);

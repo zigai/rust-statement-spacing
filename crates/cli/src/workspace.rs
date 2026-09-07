@@ -7,19 +7,29 @@ use std::env;
 use std::fs::{self, File};
 use std::io;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{PermissionsExt, symlink};
+#[cfg(windows)]
+use std::os::windows::fs::symlink_file;
 use std::path::{Component, Path, PathBuf};
 use std::str;
 
 use crate::{Result, failure};
 
-const IGNORED_DIRS: [&str; 4] = [".git", "target", ".statement-spacing", "__pycache__"];
+const IGNORED_DIRS: [&str; 6] = [
+    ".git",
+    "target",
+    ".statement-spacing",
+    "__pycache__",
+    ".venv",
+    "node_modules",
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FileState {
     pub(crate) digest: String,
     pub(crate) mode: u32,
     pub(crate) size: u64,
+    pub(crate) link: Option<PathBuf>,
 }
 
 pub(crate) type Snapshot = BTreeMap<String, FileState>;
@@ -152,7 +162,66 @@ pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>> {
     return Ok(data);
 }
 
-pub(crate) fn scan(root: &Path, limit: u64) -> Result<Snapshot> {
+fn file_link(root: &Path, path: &Path, exclusions: &[PathBuf]) -> Result<PathBuf> {
+    let original = fs::read_link(path)?;
+    let mut link = original.clone();
+    let mut current = path.to_path_buf();
+    for _ in 0..40 {
+        let parent = current
+            .parent()
+            .ok_or_else(|| return failure("symlink has no parent"))?;
+        let mut relative = parent.strip_prefix(root)?.to_path_buf();
+        for component in link.components() {
+            match component {
+                Component::Normal(name) => relative.push(name),
+                Component::CurDir => {}
+                Component::ParentDir if relative.pop() => {}
+                _ => {
+                    return Err(failure(format!(
+                        "symlink escapes workspace: {}",
+                        path.display()
+                    )));
+                }
+            }
+        }
+        if relative.components().any(|component| {
+            return IGNORED_DIRS
+                .iter()
+                .any(|name| return component.as_os_str() == *name);
+        }) || exclusions
+            .iter()
+            .any(|excluded| return relative.starts_with(excluded))
+        {
+            return Err(failure(format!(
+                "symlink targets excluded path: {}",
+                path.display()
+            )));
+        }
+        current = root.join(relative);
+        let parent = current
+            .parent()
+            .ok_or_else(|| return failure("symlink target has no parent"))?;
+        assert_no_symlink(root, parent)?;
+        match fs::symlink_metadata(&current) {
+            Ok(info) if info.is_file() => return Ok(original),
+            Ok(info) if info.file_type().is_symlink() => link = fs::read_link(&current)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(original),
+            Err(error) => return Err(error.into()),
+            Ok(_) => {
+                return Err(failure(format!(
+                    "symlink target is not a regular file: {}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    return Err(failure(format!(
+        "symlink chain is cyclic or too deep: {}",
+        path.display()
+    )));
+}
+
+pub(crate) fn scan(root: &Path, limit: u64, exclusions: &[PathBuf]) -> Result<Snapshot> {
     let mut result = BTreeMap::new();
     let mut total = 0_u64;
     let mut pending = vec![root.to_path_buf()];
@@ -165,24 +234,30 @@ pub(crate) fn scan(root: &Path, limit: u64) -> Result<Snapshot> {
                 continue;
             }
             let path = entry.path();
+            let relative = path.strip_prefix(root)?;
+            if exclusions
+                .iter()
+                .any(|excluded| return relative.starts_with(excluded))
+            {
+                continue;
+            }
             let info = fs::symlink_metadata(&path)?;
             if info.is_dir() {
                 pending.push(path);
                 continue;
             }
-            if info.file_type().is_symlink() && path.is_dir() {
-                return Err(failure(format!(
-                    "symlinked directory is not supported: {}",
-                    path.display()
-                )));
-            }
+            let link = if info.file_type().is_symlink() {
+                Some(file_link(root, &path, exclusions)?)
+            } else {
+                None
+            };
             if name
                 .as_encoded_bytes()
                 .starts_with(b".statement-spacing-tmp-")
             {
                 continue;
             }
-            if !info.is_file() {
+            if !info.is_file() && link.is_none() {
                 return Err(failure(format!(
                     "non-regular workspace file is not supported: {}",
                     path.display()
@@ -196,8 +271,11 @@ pub(crate) fn scan(root: &Path, limit: u64) -> Result<Snapshot> {
                         "workspace snapshot exceeds --max-snapshot-mib; nothing was changed",
                     );
                 })?;
-            let data = read_regular(&path)?;
-            if data.len() as u64 != info.len() {
+            let data = match &link {
+                Some(target) => target.as_os_str().as_encoded_bytes().to_vec(),
+                None => read_regular(&path)?,
+            };
+            if link.is_none() && data.len() as u64 != info.len() {
                 return Err(failure(format!(
                     "file changed during snapshot: {}",
                     path.display()
@@ -214,6 +292,7 @@ pub(crate) fn scan(root: &Path, limit: u64) -> Result<Snapshot> {
                     digest: digest(&data),
                     mode: file_mode(&info),
                     size: data.len() as u64,
+                    link,
                 },
             );
         }
@@ -221,8 +300,13 @@ pub(crate) fn scan(root: &Path, limit: u64) -> Result<Snapshot> {
     return Ok(result);
 }
 
-pub(crate) fn assert_snapshot(root: &Path, expected: &Snapshot, limit: u64) -> Result<()> {
-    let actual = scan(root, limit)?;
+pub(crate) fn assert_snapshot(
+    root: &Path,
+    expected: &Snapshot,
+    limit: u64,
+    exclusions: &[PathBuf],
+) -> Result<()> {
+    let actual = scan(root, limit, exclusions)?;
     if actual == *expected {
         return Ok(());
     }
@@ -246,7 +330,12 @@ pub(crate) fn assert_snapshot(root: &Path, expected: &Snapshot, limit: u64) -> R
     )));
 }
 
-pub(crate) fn copy_snapshot(root: &Path, replica: &Path, files: &Snapshot) -> Result<()> {
+pub(crate) fn copy_snapshot(
+    root: &Path,
+    replica: &Path,
+    files: &Snapshot,
+    exclusions: &[PathBuf],
+) -> Result<()> {
     if replica.try_exists()? {
         return Err(failure(format!(
             "replica already exists: {}",
@@ -256,8 +345,19 @@ pub(crate) fn copy_snapshot(root: &Path, replica: &Path, files: &Snapshot) -> Re
     fs::create_dir_all(replica)?;
     for (name, state) in files {
         let source = root.join(name);
-        assert_no_symlink(root, &source)?;
-        let data = read_regular(&source)?;
+        let data = if let Some(link) = &state.link {
+            let parent = source
+                .parent()
+                .ok_or_else(|| return failure("symlink has no parent"))?;
+            assert_no_symlink(root, parent)?;
+            if file_link(root, &source, exclusions)? != *link {
+                return Err(failure(format!("source changed while copying: {name}")));
+            }
+            link.as_os_str().as_encoded_bytes().to_vec()
+        } else {
+            assert_no_symlink(root, &source)?;
+            read_regular(&source)?
+        };
         if digest(&data) != state.digest {
             return Err(failure(format!("source changed while copying: {name}")));
         }
@@ -266,9 +366,16 @@ pub(crate) fn copy_snapshot(root: &Path, replica: &Path, files: &Snapshot) -> Re
             .parent()
             .ok_or_else(|| return failure("replica file has no parent"))?;
         fs::create_dir_all(parent)?;
-        fs::write(&destination, data)?;
-        #[cfg(unix)]
-        fs::set_permissions(destination, fs::Permissions::from_mode(state.mode))?;
+        if let Some(link) = &state.link {
+            #[cfg(unix)]
+            symlink(link, destination)?;
+            #[cfg(windows)]
+            symlink_file(link, destination)?;
+        } else {
+            fs::write(&destination, data)?;
+            #[cfg(unix)]
+            fs::set_permissions(destination, fs::Permissions::from_mode(state.mode))?;
+        }
     }
     return Ok(());
 }
@@ -377,11 +484,19 @@ fn validate_manifest_value(path: &Path, value: &toml::Value) -> Result<()> {
     return Ok(());
 }
 
-pub(crate) fn validate_manifest_paths(root: &Path) -> Result<()> {
+pub(crate) fn validate_manifest_paths(root: &Path, exclusions: &[PathBuf]) -> Result<()> {
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
+            let path = entry.path();
+            let relative = path.strip_prefix(root)?;
+            if exclusions
+                .iter()
+                .any(|excluded| return relative.starts_with(excluded))
+            {
+                continue;
+            }
             let kind = entry.file_type()?;
             if kind.is_dir()
                 && !IGNORED_DIRS
@@ -409,4 +524,106 @@ pub(crate) fn validate_manifest_paths(root: &Path) -> Result<()> {
         }
     }
     return Ok(());
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "Assertions define test failure; Result propagates fallible filesystem fixture operations."
+    )]
+    #[test]
+    fn snapshot_preserves_file_links_and_detects_retargeting() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().join("source");
+        let replica = temporary.path().join("replica");
+        fs::create_dir_all(root.join("vendor"))?;
+        fs::write(root.join("vendor/AGENTS.md"), "instructions")?;
+        fs::write(root.join("vendor/OTHER.md"), "instructions")?;
+        symlink("AGENTS.md", root.join("vendor/CLAUDE.md"))?;
+        symlink("CLAUDE.md", root.join("vendor/CHAIN.md"))?;
+        symlink("missing", root.join("vendor/DANGLING.md"))?;
+        let original = scan(&root, 1024, &[])?;
+        copy_snapshot(&root, &replica, &original, &[])?;
+        assert_snapshot(&replica, &original, 1024, &[])?;
+        assert_eq!(
+            fs::read_link(replica.join("vendor/CLAUDE.md"))?,
+            Path::new("AGENTS.md")
+        );
+        assert_eq!(
+            fs::read_to_string(replica.join("vendor/CHAIN.md"))?,
+            "instructions"
+        );
+        fs::write(replica.join("vendor/AGENTS.md"), "replica only")?;
+        assert_eq!(
+            fs::read_to_string(replica.join("vendor/CLAUDE.md"))?,
+            "replica only"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("vendor/CLAUDE.md"))?,
+            "instructions"
+        );
+        fs::remove_file(root.join("vendor/CLAUDE.md"))?;
+        symlink("OTHER.md", root.join("vendor/CLAUDE.md"))?;
+        assert!(assert_snapshot(&root, &original, 1024, &[]).is_err());
+        return Ok(());
+    }
+
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "Assertions define test failure; Result propagates fallible filesystem fixture operations."
+    )]
+    #[test]
+    fn snapshot_rejects_unsafe_file_links() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().join("source");
+        fs::create_dir_all(root.join("target"))?;
+        fs::write(temporary.path().join("external"), "outside")?;
+        fs::write(root.join("target/generated"), "excluded")?;
+        fs::write(root.join("regular"), "inside")?;
+        for target in ["../external", "target/generated", "link", "target"] {
+            let link = root.join("link");
+            symlink(target, &link)?;
+            assert!(scan(&root, 1024, &[]).is_err(), "accepted {target}");
+            fs::remove_file(link)?;
+        }
+        symlink("../external", root.join("indirect"))?;
+        symlink("indirect", root.join("link"))?;
+        assert!(file_link(&root, &root.join("link"), &[]).is_err());
+        return Ok(());
+    }
+
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "Assertions define test failure; Result propagates fallible filesystem fixture operations."
+    )]
+    #[test]
+    fn snapshot_exclusions_preserve_siblings_and_reject_link_bypasses() -> Result<()> {
+        use rustix::fs::{CWD, mkfifoat};
+
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().join("source");
+        let replica = temporary.path().join("replica");
+        fs::create_dir_all(root.join("results"))?;
+        fs::create_dir_all(root.join("results-kept"))?;
+        mkfifoat(CWD, root.join("results/live.fifo"), Mode::RUSR | Mode::WUSR)?;
+        fs::write(root.join("results-kept/source.rs"), "fn main() {}")?;
+        let exclusions = vec![safe_relative("results")?];
+        assert!(scan(&root, 1024, &[]).is_err());
+        let original = scan(&root, 1024, &exclusions)?;
+        copy_snapshot(&root, &replica, &original, &exclusions)?;
+        assert_eq!(
+            fs::read_to_string(replica.join("results-kept/source.rs"))?,
+            "fn main() {}"
+        );
+        assert!(!replica.join("results").exists());
+        fs::write(root.join("results/new-output"), "not tracked")?;
+        assert_snapshot(&root, &original, 1024, &exclusions)?;
+        symlink("results/new-output", root.join("bypass"))?;
+        assert!(scan(&root, 1024, &exclusions).is_err());
+        return Ok(());
+    }
 }

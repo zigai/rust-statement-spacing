@@ -78,6 +78,8 @@ pub(crate) struct Options {
     pub(crate) timeout: u64,
     #[arg(long, default_value_t = 512, value_parser = clap::value_parser!(u64).range(1..=u64::MAX / (1024 * 1024)))]
     pub(crate) max_snapshot_mib: u64,
+    #[arg(long, action = clap::ArgAction::Append, help = "Omit a workspace-relative file or directory from verification snapshots (repeatable; no globs)")]
+    pub(crate) snapshot_exclude: Vec<String>,
 }
 
 fn main() -> ExitCode {

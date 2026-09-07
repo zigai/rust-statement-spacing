@@ -324,9 +324,10 @@ pub(crate) fn commit(
     changed: &BTreeMap<String, Vec<u8>>,
     final_check: impl FnOnce() -> Result<()>,
     limit: u64,
+    exclusions: &[PathBuf],
 ) -> Result<()> {
     check_interrupted()?;
-    assert_snapshot(root, original, limit)?;
+    assert_snapshot(root, original, limit, exclusions)?;
     for name in changed.keys() {
         if !original.contains_key(name) || !name.ends_with(".rs") {
             return Err(failure(format!(
@@ -419,10 +420,11 @@ pub(crate) fn commit(
                     digest: digest(data),
                     mode: original[name].mode,
                     size: data.len() as u64,
+                    link: None,
                 },
             );
         }
-        assert_snapshot(root, &expected, limit)?;
+        assert_snapshot(root, &expected, limit, exclusions)?;
         check_interrupted()?;
         if let Some(map) = journal.as_object_mut() {
             map.insert("phase".into(), Value::from("complete"));

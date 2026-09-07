@@ -235,56 +235,6 @@ impl Drop for JobObject {
         }
     }
 }
-fn is_lint_library_name(name: &str) -> bool {
-    return name.contains("statement_spacing@")
-        && (name.ends_with(".so") || name.ends_with(".dylib") || name.ends_with(".dll"));
-}
-
-fn find_prebuilt_library(path: &Path) -> Option<PathBuf> {
-    if path.is_file() {
-        if let Some(ext) = path.extension().and_then(|ext| return ext.to_str())
-            && (ext == "so" || ext == "dylib" || ext == "dll")
-        {
-            return Some(path.to_path_buf());
-        }
-        return None;
-    }
-    let candidates = [path.join("target/release")];
-    for dir in candidates {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let candidate = entry.path();
-                if !candidate.is_file() {
-                    continue;
-                }
-                if let Some(name) = candidate.file_name().and_then(|n| return n.to_str())
-                    && is_lint_library_name(name)
-                {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-    if let Ok(entries) = fs::read_dir(path.join("target/dylint/libraries")) {
-        for toolchain_entry in entries.flatten() {
-            let release_dir = toolchain_entry.path().join("release");
-            if let Ok(lib_entries) = fs::read_dir(release_dir) {
-                for lib_entry in lib_entries.flatten() {
-                    let candidate = lib_entry.path();
-                    if !candidate.is_file() {
-                        continue;
-                    }
-                    if let Some(name) = candidate.file_name().and_then(|n| return n.to_str())
-                        && is_lint_library_name(name)
-                    {
-                        return Some(candidate);
-                    }
-                }
-            }
-        }
-    }
-    return None;
-}
 
 impl Driver {
     pub(crate) fn run(
@@ -618,8 +568,8 @@ impl Driver {
                 |_| return library.clone(),
                 |relative| return root.join(relative),
             );
-            if let Some(prebuilt) = find_prebuilt_library(&library) {
-                args.extend(["--lib-path".into(), prebuilt.to_string_lossy().into_owned()]);
+            if library.is_file() {
+                args.extend(["--lib-path".into(), library.to_string_lossy().into_owned()]);
             } else {
                 args.extend(["--path".into(), library.to_string_lossy().into_owned()]);
             }
@@ -648,7 +598,7 @@ impl Driver {
             args.extend(["--target".into(), target.clone()]);
         }
         let result = self.run(args, root, Some(&env), false)?;
-        let (findings, edits, errors) = collect_edits(root, &result.stdout, &self.package_roots)?;
+        let (findings, edits, errors) = collect_edits(root, &result.stdout)?;
         if !errors.is_empty() {
             return Err(failure(format!(
                 "compilation produced non-statement_spacing errors: {}",
