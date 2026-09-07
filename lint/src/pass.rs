@@ -267,6 +267,16 @@ impl<'tcx> LateLintPass<'tcx> for Spacing {
             _ => expression.span,
         };
         self.anchor(cx, expression.hir_id, span);
+        if expression.span.from_expansion() {
+            // Only a directly written invocation becomes a source anchor.
+            // Nested/generated call sites still carry expansion context and
+            // are rejected by file_range; macro interiors remain opaque.
+            self.anchor(
+                cx,
+                expression.hir_id,
+                expression.span.ctxt().outer_expn_data().call_site,
+            );
+        }
         if let Some(place) = place(expression) {
             self.event(cx, expression.span, EventKind::Read, Some(place));
         }

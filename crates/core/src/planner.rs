@@ -7,6 +7,7 @@ mod decisions;
 mod groups;
 mod local;
 mod setup;
+mod visual;
 
 use decisions::{Decision, blocked};
 
@@ -51,12 +52,20 @@ fn guard_pair(config: &Config, a: &Unit, b: &Unit) -> bool {
 
 fn build_decisions(
     config: &Config,
+    source: &str,
     global_rules: RuleMask,
     list: &UnitList,
 ) -> Vec<Option<Decision>> {
     let mut decisions = vec![None; list.gaps.len()];
     let cohesive = groups::cohesive(config, list);
-    local::apply(config, global_rules, list, &cohesive, &mut decisions);
+    local::apply(
+        config,
+        source,
+        global_rules,
+        list,
+        &cohesive,
+        &mut decisions,
+    );
     setup::apply(config, global_rules, list, &cohesive, &mut decisions);
     local::cap_blank_lines(global_rules, list, &mut decisions);
     return decisions;
@@ -75,7 +84,7 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
         if list.gaps.len() != list.units.len().saturating_sub(1) {
             return Err("invalid source model: gap/unit count mismatch".into());
         }
-        let decisions = build_decisions(config, global_rules, list);
+        let decisions = build_decisions(config, source, global_rules, list);
         for (i, decision) in decisions.iter().enumerate() {
             if blocked(list, i) {
                 result.skipped_boundaries += 1;
@@ -124,7 +133,7 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
                 gap.blank_lines = decision.blanks;
             }
         }
-        let second = build_decisions(config, global_rules, &fixed_model);
+        let second = build_decisions(config, source, global_rules, &fixed_model);
         for (i, decision) in second.iter().enumerate() {
             if let Some(decision) = decision
                 && let Some(gap) = fixed_model.gaps.get(i)

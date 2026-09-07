@@ -8,6 +8,7 @@ mod lower;
 mod parse;
 mod protection;
 mod semantics;
+mod shape;
 mod units;
 
 pub use parse::{ParsedSource, parse_source, token_fingerprint};

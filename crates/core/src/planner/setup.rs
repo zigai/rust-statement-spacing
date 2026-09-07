@@ -2,8 +2,9 @@
 
 use super::decisions::{Decision, blocked, effective_blank, enabled, put, separate};
 use super::guard_pair;
-use crate::config::{Config, Expressions, Overflow, UseIn};
-use crate::model::{Rule, RuleMask, UnitKind, UnitList};
+use super::visual;
+use crate::config::{Bindings, Config, Expressions, GuardChain, Overflow, UseIn};
+use crate::model::{Form, Rule, RuleMask, UnitKind, UnitList};
 use crate::relations::{control_inputs, intersects, outputs};
 
 pub(super) fn apply(
@@ -43,6 +44,83 @@ pub(super) fn apply(
                     || !gap_unit.facts.mutating_receivers.is_empty())
             {
                 continue;
+            }
+            if config.control_flow.guard_chain == GuardChain::Contextual
+                && config.grouping.expressions != Expressions::Strict
+                && config.grouping.max_before_control > 0
+                && unit.is_guard
+                && gap_unit.kind == UnitKind::Expression
+                && intersects(
+                    &gap_unit.facts.reads,
+                    &unit.facts.header_reads,
+                    config.grouping.self_fields,
+                )
+                && unit.shape.form != Form::CallCheck
+            {
+                if visual::validation_stages(list) {
+                    changed |= put(
+                        global_rules,
+                        list,
+                        decisions,
+                        gap,
+                        separate(Rule::ControlFlow, 90, "separate these validation stages"),
+                    );
+                }
+                continue;
+            }
+            if config.grouping.bindings == Bindings::Multiline && unit.shape.form == Form::Loop {
+                let mut start = gap;
+                while start > 0
+                    && !blocked(list, start - 1)
+                    && effective_blank(list, decisions, start - 1) == 0
+                    && list
+                        .units
+                        .get(start - 1)
+                        .is_some_and(|unit| return unit.kind.ordinary())
+                {
+                    start -= 1;
+                }
+                if control - start > config.grouping.max_before_control
+                    && list
+                        .units
+                        .iter()
+                        .take(control)
+                        .skip(start)
+                        .all(|unit| return unit.kind.is_binding())
+                {
+                    let scalar_count = list
+                        .units
+                        .iter()
+                        .take(control)
+                        .skip(start)
+                        .filter(|unit| {
+                            return unit.kind == UnitKind::Let
+                                && unit.shape.mutable
+                                && unit.shape.form == Form::Literal;
+                        })
+                        .count();
+                    let boundary = if config.grouping.max_before_control > 0
+                        && gap_unit.shape.form == Form::Literal
+                        && gap_unit.shape.mutable
+                        && scalar_count == 1
+                    {
+                        gap.saturating_sub(1)
+                    } else {
+                        gap
+                    };
+                    changed |= put(
+                        global_rules,
+                        list,
+                        decisions,
+                        boundary,
+                        separate(
+                            Rule::ControlFlow,
+                            90,
+                            "keep this loop's complete setup phase intact",
+                        ),
+                    );
+                    continue;
+                }
             }
             if !unit.facts.known && config.grouping.max_before_control != 0 {
                 continue;
@@ -142,7 +220,14 @@ pub(super) fn apply(
             let boundary = match config.grouping.overflow {
                 Overflow::WholeGroup => {
                     if related != total || total > limit {
-                        let retained = (control - accumulator_start).min(limit).max(mandatory);
+                        let accumulators = control - accumulator_start;
+                        let retained = if config.grouping.bindings == Bindings::Multiline
+                            && accumulators > limit
+                        {
+                            mandatory
+                        } else {
+                            accumulators.min(limit).max(mandatory)
+                        };
                         if retained == 0 {
                             Some(gap)
                         } else {

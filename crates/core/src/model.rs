@@ -167,6 +167,8 @@ pub struct Facts {
     pub direct_callees: BTreeSet<String>,
     /// Places read in a control-flow header.
     pub header_reads: BTreeSet<Place>,
+    /// Outer places mentioned in deferred bodies; not evidence that a body executed.
+    pub captures: BTreeSet<Place>,
     /// Places read by the first executable body statement.
     pub first_body_reads: BTreeSet<Place>,
     /// Places read throughout the unit, excluding deferred bodies.
@@ -182,7 +184,11 @@ pub enum ItemKind {
     Function,
     /// Major declaration such as a struct or implementation.
     Major,
-    /// Compact declaration such as an import or type alias.
+    /// Imports and external crate declarations.
+    Import,
+    /// Constant and static value declarations.
+    Constant,
+    /// Other compact declarations, including type aliases and out-of-line modules.
     Compact,
     /// Syntax whose interior is not analyzed.
     Opaque,
@@ -230,6 +236,65 @@ impl UnitKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+/// Outer expression form, independent of its formatting and local identities.
+pub enum Form {
+    /// An expression without a more specific visual role.
+    #[default]
+    Other,
+    /// A scalar literal used as a counter, flag, or completion value.
+    Literal,
+    /// A literal, aggregate, or direct path value.
+    Value,
+    /// A free or associated function call.
+    Call,
+    /// A method call.
+    Method,
+    /// A match value.
+    Branch,
+    /// An if expression, including an else branch.
+    Conditional,
+    /// A pattern checking the result of an immediate call.
+    CallCheck,
+    /// A standalone macro invocation whose interior remains opaque.
+    Macro,
+    /// A loop expression.
+    Loop,
+    /// A deferred closure.
+    Closure,
+    /// A binding with an early-exiting else arm.
+    LetElse,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// Syntactic visual-grouping evidence; never a substitute for resolved places.
+pub struct Shape {
+    /// Outer initializer or expression form after transparent wrappers.
+    pub form: Form,
+    /// Whether this binding introduces mutable state.
+    pub mutable: bool,
+    /// Whether immediate evaluation contains error propagation.
+    pub fallible: bool,
+    /// Written terminal error constructor/callback used by an error adapter.
+    pub error_handler: Option<String>,
+    /// Whether a short guard actually exits, rather than merely ending with `?`.
+    pub exiting_guard: bool,
+    /// Ranges of immediate string inputs, excluding deferred bodies.
+    pub string_inputs: Vec<ByteRange>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+/// The immediate executable scope, without inheriting an enclosing closure or loop.
+pub enum Scope {
+    /// Function bodies, blocks, and item lists.
+    #[default]
+    Ordinary,
+    /// The direct body of a loop.
+    Loop,
+    /// The direct body of a closure.
+    Closure,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// One direct source sibling and its compiler annotations.
 #[expect(
@@ -243,6 +308,8 @@ pub struct Unit {
     pub code_range: ByteRange,
     /// Syntactic category used to select spacing policy.
     pub kind: UnitKind,
+    /// Syntax structure used by visual grouping policies.
+    pub shape: Shape,
     /// Whether this expression is the enclosing block value.
     pub is_tail: bool,
     /// Whether this control-flow unit is a short exiting guard.
@@ -291,6 +358,8 @@ pub struct UnitList {
     pub executable_count: usize,
     /// Whether this container holds declarations rather than statements.
     pub item_list: bool,
+    /// Immediate executable scope owning this list.
+    pub scope: Scope,
 }
 
 #[derive(Clone, Debug, Default)]

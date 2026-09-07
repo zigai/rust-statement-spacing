@@ -28,6 +28,8 @@ option_enum!(
     SameKind => "same-kind",
     /// Join bindings with a known semantic relationship.
     Related => "related",
+    /// Separate multiline binding phases, retaining short wrapped dependencies.
+    Multiline => "multiline",
     /// Retain existing binding spacing.
     Preserve => "preserve");
 option_enum!(
@@ -35,6 +37,8 @@ option_enum!(
     Expressions, Related,
     /// Group semantically related expressions.
     Related => "related",
+    /// Separate multiline operation phases, retaining mutation continuations.
+    Multiline => "multiline",
     /// Separate ordinary expressions.
     Strict => "strict",
     /// Retain existing expression spacing.
@@ -70,10 +74,12 @@ option_enum!(
     /// Retain existing spacing for this category.
     Preserve => "preserve");
 option_enum!(
-    /// Treatment of short guards ending in an exit or try operation.
+    /// Spacing after conditionals, with policies for short guards.
     GuardChain, Allow,
     /// Permit guards to remain adjacent to following code.
     Allow => "allow",
+    /// Separate code after if blocks, except an immediately following return.
+    Contextual => "contextual",
     /// Apply normal block separation after guards.
     Separate => "separate");
 option_enum!(
@@ -81,6 +87,8 @@ option_enum!(
     Tail, Smart,
     /// Consider block size, completion values, guards, and immediate producers.
     Smart => "smart",
+    /// Separate explicit completion phases, retaining compact closure and tuple completions.
+    Visual => "visual",
     /// Require separation before the tail value.
     AlwaysSeparate => "always-separate",
     /// Retain existing tail spacing.
@@ -246,7 +254,7 @@ pub struct Items {
     pub functions: Separation,
     /// Spacing around major declarations; defaults to separate.
     pub major_items: Separation,
-    /// Whether compact declarations can remain adjacent; defaults to true.
+    /// Whether compact declarations in the same family can remain adjacent; defaults to true.
     pub compact_declarations: bool,
 }
 

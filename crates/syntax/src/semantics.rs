@@ -98,6 +98,37 @@ impl SemanticIndex {
                     .any(|event| return event.kind == EventKind::Unknown),
             ..Facts::default()
         };
+        if !deferred.is_empty() {
+            let locals: BTreeSet<_> = self
+                .events
+                .iter()
+                .filter(|event| {
+                    return event.kind == EventKind::Define
+                        && deferred
+                            .iter()
+                            .any(|body| return body.contains(event.range));
+                })
+                .filter_map(|event| {
+                    return event
+                        .place
+                        .as_ref()
+                        .map(|place| return place.local.as_str());
+                })
+                .collect();
+            facts.captures = self
+                .events
+                .iter()
+                .filter(|event| {
+                    return event.kind != EventKind::Define
+                        && deferred
+                            .iter()
+                            .any(|body| return body.contains(event.range));
+                })
+                .filter_map(|event| return event.place.as_ref())
+                .filter(|place| return !locals.contains(place.local.as_str()))
+                .cloned()
+                .collect();
+        }
         for event in &events {
             if let EventKind::DirectCallee(callee) = &event.kind {
                 if event.range.start == range.start && range.end - event.range.end <= 1 {

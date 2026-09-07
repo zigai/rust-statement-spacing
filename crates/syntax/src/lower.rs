@@ -7,6 +7,7 @@ use rust_statement_spacing_core::{
 use crate::comments::classify_gap;
 use crate::protection::{inside_token_tree, protected};
 use crate::semantics::SemanticIndex;
+use crate::shape;
 use crate::units::{
     code_range, control_body_start, deferred_ranges, expression_node, guard, immediate_body_first,
     is_expression, is_item, is_unit, range, unit_kind,
@@ -66,6 +67,7 @@ fn make_unit(node: &SyntaxNode, semantics: Option<&SemanticIndex>) -> Unit {
         range: range(node),
         code_range: code,
         kind: category,
+        shape: shape::shape(node),
         is_tail: is_expression(node) && !is_item(node),
         is_guard: guard(&expression),
         is_empty_loop: expression.kind() == SyntaxKind::FOR_EXPR
@@ -183,6 +185,7 @@ pub(crate) fn lower(
             gaps,
             executable_count: count,
             item_list,
+            scope: shape::scope(&container),
         });
     }
     return model;

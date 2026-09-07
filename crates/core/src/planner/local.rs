@@ -2,12 +2,14 @@
 
 use super::decisions::{Decision, blocked, enabled, join, put, separate};
 use super::guard_pair;
+use super::visual;
 use crate::config::{Bindings, Config, Expressions, GuardChain, ImmediateCheck, Separation, Tail};
-use crate::model::{ItemKind, Rule, RuleMask, UnitKind, UnitList};
+use crate::model::{Form, ItemKind, Rule, RuleMask, UnitKind, UnitList};
 use crate::relations::{Relationship, direct_producer, intersects, relationship};
 
 pub(super) fn apply(
     config: &Config,
+    source: &str,
     global_rules: RuleMask,
     list: &UnitList,
     cohesive: &[bool],
@@ -24,9 +26,7 @@ pub(super) fn apply(
         }
         let immediate = config.error_handling.immediate_result_option_check == ImmediateCheck::Join
             && a.kind == UnitKind::Let
-            && a.facts.known
             && b.facts.known
-            && a.facts.definitions.len() == 1
             && b.facts
                 .check_of
                 .as_ref()
@@ -77,10 +77,12 @@ pub(super) fn apply(
             let major = kinds.contains(&UnitKind::Item(ItemKind::Major));
             let required = (function && config.items.functions == Separation::Separate)
                 || (major && config.items.major_items == Separation::Separate)
-                || (kinds
-                    .iter()
-                    .all(|kind| return *kind == UnitKind::Item(ItemKind::Compact))
-                    && !config.items.compact_declarations);
+                || (kinds.iter().all(|kind| {
+                    return matches!(
+                        kind,
+                        UnitKind::Item(ItemKind::Import | ItemKind::Constant | ItemKind::Compact)
+                    );
+                }) && (a.kind != b.kind || !config.items.compact_declarations));
             if required {
                 put(
                     global_rules,
@@ -127,8 +129,10 @@ pub(super) fn apply(
             && a.kind == UnitKind::Assignment
             && b.facts.known
             && intersects(&a.facts.reads, &b.facts.reads, config.grouping.self_fields);
-        let guard_continuation =
-            compact_policy && a.is_guard && config.control_flow.guard_chain == GuardChain::Allow;
+        let guard_continuation = compact_policy
+            && ((a.is_guard && config.control_flow.guard_chain == GuardChain::Allow)
+                || (config.control_flow.guard_chain == GuardChain::Contextual
+                    && visual::guard_continuation(a, b)));
         let guard_exit = guard_continuation
             && (b.kind == UnitKind::Exit || b.is_tail)
             && config.exits.tail == Tail::Smart;
@@ -143,11 +147,13 @@ pub(super) fn apply(
                         &b.facts.reads,
                         config.grouping.self_fields,
                     )));
+        let visual_tail = config.exits.tail == Tail::Visual && visual::compact_tail(list, a, b);
         let exit = b.kind == UnitKind::Exit
             && !cleanup_exit
             && !attached_exit
             && match config.exits.tail {
                 Tail::AlwaysSeparate => true,
+                Tail::Visual => !visual_tail,
                 Tail::Preserve => false,
                 Tail::Smart => {
                     long && !completion
@@ -161,6 +167,7 @@ pub(super) fn apply(
             && !attached_exit
             && match config.exits.tail {
                 Tail::AlwaysSeparate => true,
+                Tail::Visual => !visual_tail,
                 Tail::Preserve => false,
                 Tail::Smart => {
                     long && !completion
@@ -217,6 +224,7 @@ pub(super) fn apply(
                 || relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Related);
         if a.kind.ends_block()
             && !completion_exit
+            && !visual_tail
             && !guards
             && !guard_continuation
             && !unsafe_continuation
@@ -239,10 +247,53 @@ pub(super) fn apply(
                 ),
             );
         }
+        if b.kind == UnitKind::Control
+            && a.kind.ordinary()
+            && (if a.kind.is_binding() {
+                config.grouping.bindings == Bindings::Multiline
+            } else {
+                config.grouping.expressions == Expressions::Multiline
+            })
+            && visual::boundary(config, source, list, i)
+        {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                separate(
+                    Rule::ControlFlow,
+                    30,
+                    "separate this control flow from the preceding multiline phase",
+                ),
+            );
+        }
         // Special constructs own their boundary, even when their specific rule
         // is disabled. A generic rule must not reproduce a suppressed rule.
         if b.kind == UnitKind::Control || b.kind == UnitKind::Exit || b.is_tail {
             continue;
+        }
+        if config.grouping.bindings == Bindings::Multiline
+            && a.kind.is_binding()
+            && b.shape.form == Form::Macro
+            && !b.facts.reads.is_empty()
+            && !intersects(
+                &a.facts.definitions,
+                &b.facts.reads,
+                config.grouping.self_fields,
+            )
+        {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                separate(
+                    Rule::Bindings,
+                    30,
+                    "separate setup from this macro operation",
+                ),
+            );
         }
         if !a.kind.ordinary() || !b.kind.ordinary() {
             continue;
@@ -254,6 +305,7 @@ pub(super) fn apply(
             let required = match config.grouping.bindings {
                 Bindings::Consecutive | Bindings::Preserve => false,
                 Bindings::SameKind => a.kind != b.kind,
+                Bindings::Multiline => visual::boundary(config, source, list, i),
                 Bindings::Related => {
                     relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Unrelated
                 }
@@ -264,17 +316,14 @@ pub(super) fn apply(
                     list,
                     decisions,
                     i,
-                    separate(
-                        Rule::Bindings,
-                        30,
-                        "separate unrelated or different-kind binding groups",
-                    ),
+                    separate(Rule::Bindings, 30, "separate these binding phases"),
                 );
             }
         } else {
             let required = match config.grouping.expressions {
                 Expressions::Preserve => false,
                 Expressions::Strict => true,
+                Expressions::Multiline => visual::boundary(config, source, list, i),
                 Expressions::Related => {
                     relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Unrelated
                 }
@@ -290,11 +339,7 @@ pub(super) fn apply(
                     list,
                     decisions,
                     i,
-                    separate(
-                        rule,
-                        30,
-                        "separate operations with no resolved local grouping relationship",
-                    ),
+                    separate(rule, 30, "separate these operation phases"),
                 );
             }
         }
