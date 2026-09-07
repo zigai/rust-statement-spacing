@@ -101,7 +101,7 @@ def main():
             )
             if not options.portable_only:
                 run(
-                    ["cargo", "+nightly-2025-09-18", "build", "--release", "--locked"],
+                    ["cargo", "+nightly-2026-05-28", "build", "--release", "--locked"],
                     ROOT / "lint",
                 )
                 run([sys.executable, "scripts/validate_registration.py"])
@@ -217,50 +217,22 @@ def main():
                         ],
                         fixture,
                     )
-                    prebuilt_so = next(
-                        (
-                            p
-                            for p in (
-                                *(ROOT / "lint/target/release").glob("libstatement_spacing@*"),
-                                *(ROOT / "lint/target/dylint/libraries").glob(
-                                    "*/release/libstatement_spacing@*"
-                                ),
-                            )
-                            if p.is_file() and p.suffix in (".so", ".dylib", ".dll")
-                        ),
-                        None,
+                    env = os.environ.copy()
+                    env["CARGO_TARGET_DIR"] = str(temporary / "native-target")
+                    run(
+                        [
+                            "cargo",
+                            "dylint",
+                            "--path",
+                            ROOT / "lint",
+                            "--fix",
+                            "--",
+                            "--all-targets",
+                            "--locked",
+                        ],
+                        fixture,
+                        env=env,
                     )
-                    if prebuilt_so:
-                        run(
-                            [
-                                "cargo",
-                                "dylint",
-                                "--lib-path",
-                                prebuilt_so,
-                                "--fix",
-                                "--",
-                                "--all-targets",
-                                "--locked",
-                            ],
-                            fixture,
-                        )
-                    else:
-                        env = os.environ.copy()
-                        env["CARGO_TARGET_DIR"] = str(temporary / "native-target")
-                        run(
-                            [
-                                "cargo",
-                                "dylint",
-                                "--path",
-                                ROOT / "lint",
-                                "--fix",
-                                "--",
-                                "--all-targets",
-                                "--locked",
-                            ],
-                            fixture,
-                            env=env,
-                        )
                     assert source.read_bytes() == expected, (
                         "native Dylint fix differs from golden output"
                     )

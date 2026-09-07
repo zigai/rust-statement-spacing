@@ -11,7 +11,7 @@ name = "statement_spacing"
 crate-type = ["cdylib"]
 
 [dependencies]
-dylint_linting = "=5.0.0"
+dylint_linting = "=6.0.4"
 globset = "=0.4.18"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"

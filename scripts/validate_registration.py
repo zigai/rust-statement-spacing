@@ -74,7 +74,7 @@ def main():
             env = os.environ.copy()
             env.pop("DYLINT_RUSTFLAGS", None)
             env.pop("DYLINT_LIST", None)
-            target = (options.target_dir or (library / "target")).resolve()
+            target = (options.target_dir or (temporary / "target")).resolve()
             env["CARGO_TARGET_DIR"] = str(target)
             listing = run(["cargo", "dylint", "list", "--path", library], fixture, env)
             registered = {
@@ -85,7 +85,7 @@ def main():
             }
             if registered != EXPECTED:
                 raise RuntimeError(f"registered lint IDs differ: {sorted(registered)}")
-            # Dylint 5's list command builds the driver/library but omits groups.
+            # The list command builds the driver/library but omits groups.
             # Invoke that same driver directly: Cargo's metadata probes cannot
             # accept rustc's -W help output in place of --print=file-names.
             libraries = [

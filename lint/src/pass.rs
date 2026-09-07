@@ -5,7 +5,9 @@ use rust_statement_spacing_core::{Config, Place, Rule, RuleMask, plan};
 use rust_statement_spacing_syntax::{
     Anchor, Event, EventKind, SemanticIndex, parse_source, token_fingerprint,
 };
-use rustc_errors::Applicability;
+use rustc_errors::{
+    Applicability, Diag, DiagCtxtHandle, Diagnostic, EmissionGuarantee, Level as DiagnosticLevel,
+};
 use rustc_hir::{self as hir, ExprKind, PatKind, StmtKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_session::impl_lint_pass;
@@ -27,6 +29,29 @@ struct FileData {
     start: BytePos,
     source: String,
     semantics: SemanticIndex,
+}
+
+struct SpacingDiagnostic {
+    message: String,
+    span: Span,
+    replacement: Option<String>,
+}
+
+impl<'a, G: EmissionGuarantee> Diagnostic<'a, G> for SpacingDiagnostic {
+    fn into_diag(self, dcx: DiagCtxtHandle<'a>, level: DiagnosticLevel) -> Diag<'a, G> {
+        let mut diag = Diag::new(dcx, level, self.message);
+        if let Some(replacement) = self.replacement {
+            diag.span_suggestion(
+                self.span,
+                "adjust the blank-line boundary",
+                replacement,
+                Applicability::MachineApplicable,
+            );
+        } else {
+            diag.help("this compact/protected layout has no safe whitespace-only fix");
+        }
+        diag
+    }
 }
 
 pub struct Spacing {
@@ -86,7 +111,12 @@ impl Spacing {
         };
         let mut enabled = RuleMask::all();
         for rule in Rule::ALL {
-            if cx.tcx.lint_level_at_node(crate::lint(rule), id).level == Level::Allow {
+            if cx
+                .tcx
+                .lint_level_spec_at_node(crate::lint(rule), id)
+                .level()
+                == Level::Allow
+            {
                 enabled = enabled.without(rule);
             }
         }
@@ -148,22 +178,18 @@ impl Spacing {
                     };
                     let span = spans::source_span(anchor.span, file.start, finding.range)
                         .ok_or("source span overflow")?;
-                    cx.tcx
-                        .node_span_lint(crate::lint(finding.rule), anchor.hir_id, span, |diag| {
-                            diag.primary_message(finding.message);
-                            if let Some(edit) = finding.edit {
-                                diag.span_suggestion(
-                                    span,
-                                    "adjust the blank-line boundary",
-                                    text.original_newlines(&edit.replacement),
-                                    Applicability::MachineApplicable,
-                                );
-                            } else {
-                                diag.help(
-                                    "this compact/protected layout has no safe whitespace-only fix",
-                                );
-                            }
-                        });
+                    cx.tcx.emit_node_span_lint(
+                        crate::lint(finding.rule),
+                        anchor.hir_id,
+                        span,
+                        SpacingDiagnostic {
+                            message: finding.message,
+                            span,
+                            replacement: finding
+                                .edit
+                                .map(|edit| text.original_newlines(&edit.replacement)),
+                        },
+                    );
                 }
                 checked.push(file.path.display().to_string());
                 Ok(())

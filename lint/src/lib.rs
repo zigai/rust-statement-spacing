@@ -78,7 +78,6 @@ pub fn register_lints(sess: &Session, store: &mut LintStore) {
     };
     // Bridge standard Send/Sync for globset's trait objects to rustc's dynamic markers.
     let workspace = IntoDynSyncSend(workspace);
-    // This adapter is deliberately pinned to Dylint 5 and its compiler nightly.
     store.register_late_pass(move |_| {
         Box::new(pass::Spacing::new(config.clone(), workspace.clone().0))
     });
