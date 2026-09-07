@@ -83,10 +83,22 @@ same_receiver = true
 # Consider statements that read the same input variables as related.
 shared_inputs = true
 
+# Relate accesses to fields of the same non-self object.
+# This is a grouping heuristic, not proof that sibling fields alias.
+same_object = true
+
+# Group direct calls to the same compiler-resolved free function, including `?`.
+# Nested argument calls and deferred bodies do not establish this relationship.
+same_callee = true
+
+# Group consecutive assignments and calls with mutable receivers.
+# As with consecutive bindings, these form a state-update phase even on different objects.
+consecutive_mutations = true
+
 # Field projection matching on self:
-# - "distinct": treat sibling fields (`self.a`, `self.b`) as distinct places (default).
-# - "root":     relate all field accesses sharing the same root receiver.
-self_fields = "distinct"
+# - "distinct": treat sibling fields (`self.a`, `self.b`) as distinct places.
+# - "root":     relate field accesses on the same self binding (default).
+self_fields = "root"
 
 # Maximum setup statements permitted directly before control flow (0..1024).
 max_before_control = 1
@@ -95,12 +107,14 @@ max_before_control = 1
 # - "header":                         condition or match expression only.
 # - "header-or-first-body-statement": includes first direct statement in block body (default).
 # - "whole-body":                     includes all non-deferred body reads.
+# Non-header modes also recognize state initialized here and mutated later in
+# the control body, including nested updates (but not deferred closure bodies).
 use_in = "header-or-first-body-statement"
 
 # How excess setup exceeding `max_before_control` is handled:
-# - "related-suffix": retain only the bounded related suffix before control flow (default).
-# - "whole-group":    separate the entire setup group from control flow.
-overflow = "related-suffix"
+# - "whole-group":    keep the setup group intact; separate it from control flow (default).
+# - "related-suffix": split off only a bounded related suffix before control flow.
+overflow = "whole-group"
 
 # When true, automatically removes blank lines between related statements.
 # When false, existing blank lines between related statements are preserved.
@@ -110,13 +124,22 @@ join_related = false
 [statement_spacing.control_flow]
 # Spacing following standalone blocks and control flow (if, match, loops):
 # - "separate": require a separating blank line (default).
-# - "preserve": retain existing spacing.
+# - "preserve": retain existing spacing, allowing adjacent if/if let blocks.
 after_block = "separate"
 
 # Spacing between consecutive short exiting guards (e.g. `if !ok { return; }`):
 # - "allow":    permit guards to remain adjacent without blank lines (default).
 # - "separate": require blank lines between guards.
 guard_chain = "allow"
+
+# Keep receiver-centered groups together, including local buffers and change
+# flags consumed between operations. Existing blank lines remain boundaries;
+# unrelated operations and adjacent control blocks are not swept into a group.
+# Resolved header inputs remain evidence even when other facts are unknown.
+related_continuation = true
+
+# Keep state updates and a final bare return together, with or without empty drains.
+compact_cleanup = true
 
 
 [statement_spacing.exits]
@@ -125,10 +148,13 @@ guard_chain = "allow"
 short_block_max_statements = 2
 
 # Spacing before final block value expressions / returns:
-# - "smart":           considers block size and producer relationships (default).
+# - "smart":           respects direct producers for tail values and explicit returns (default).
 # - "always-separate": always require a blank line before tail values.
 # - "preserve":        retain existing tail spacing.
 tail = "smart"
+
+# Keep a state update with its immediate valueless break/continue.
+attached_loop_exit = true
 
 
 [statement_spacing.error_handling]
@@ -149,7 +175,7 @@ functions = "separate"
 # - "preserve": retain existing spacing.
 major_items = "separate"
 
-# Allow compact one-line declarations (type aliases, consts) to remain adjacent.
+# Allow compact declarations (mod foo;, type aliases, consts) to remain adjacent.
 compact_declarations = true
 ```
 
