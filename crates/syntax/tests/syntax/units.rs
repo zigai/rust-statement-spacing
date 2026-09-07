@@ -101,6 +101,26 @@ fn out_of_line_modules_remain_compact() -> Result<(), Box<dyn Error>> {
     clippy::panic_in_result_fn,
     reason = "assertions define the test failure boundary and Result propagates setup errors"
 )]
+fn compact_declarations_separate_families_not_individual_items() -> Result<(), Box<dyn Error>> {
+    let source = "use std::io;\nuse std::fs;\nconst FIRST: u8 = 1;\nstatic SECOND: u8 = 2;\ntype Value = u8;\ntype Other = u16;\n";
+    let expected = "use std::io;\nuse std::fs;\n\nconst FIRST: u8 = 1;\nstatic SECOND: u8 = 2;\n\ntype Value = u8;\ntype Other = u16;\n";
+    let mut config = Config::default();
+    assert_eq!(structural(source, &config)?.0, expected);
+    assert!(structural(expected, &config)?.1.findings.is_empty());
+    config.disable.push(Rule::ItemSpacing);
+    assert_eq!(structural(source, &config)?.0, source);
+    config.disable.clear();
+    config.items.compact_declarations = false;
+    let separated = "use std::io;\n\nuse std::fs;\n\nconst FIRST: u8 = 1;\n\nstatic SECOND: u8 = 2;\n\ntype Value = u8;\n\ntype Other = u16;\n";
+    assert_eq!(structural(source, &config)?.0, separated);
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
 fn inline_modules_keep_major_item_boundaries() -> Result<(), Box<dyn Error>> {
     let source = "mod before;\npub(super) mod inline {}\nmod after;\n";
     assert_eq!(

@@ -53,6 +53,7 @@ fn rendered(config: &Config, setup: &[Facts], control: &Facts) -> Result<String,
         units.push(Unit {
             range,
             code_range: range,
+            shape: Default::default(),
             kind: if is_control {
                 UnitKind::Control
             } else {
@@ -76,6 +77,7 @@ fn rendered(config: &Config, setup: &[Facts], control: &Facts) -> Result<String,
             units,
             gaps,
             item_list: false,
+            scope: Default::default(),
         }],
         layout_edges: vec![],
     };

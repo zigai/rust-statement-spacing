@@ -42,25 +42,151 @@ fn projection_prunes_incidental_base_reads() {
 
 #[test]
 fn deferred_body_use_does_not_attach_outer_control() {
-    let place = Place::local("captured");
-    let index = SemanticIndex {
+    let captured = Place::local("captured");
+    let immediate = Place::local("immediate");
+    let mut index = SemanticIndex {
         anchors: vec![],
         events: vec![Event {
-            range: ByteRange::new(10, 18),
+            range: ByteRange::new(2, 7),
             kind: EventKind::Read,
-            place: Some(place),
+            place: Some(immediate.clone()),
         }],
     };
+    for kind in [
+        EventKind::Read,
+        EventKind::Write,
+        EventKind::Receiver,
+        EventKind::MutatingReceiver,
+        EventKind::Inspect,
+    ] {
+        index.events.push(Event {
+            range: ByteRange::new(10, 18),
+            kind,
+            place: Some(captured.clone()),
+        });
+    }
     let facts = index.facts(
         ByteRange::new(0, 30),
         None,
-        None,
-        &[],
+        Some(ByteRange::new(0, 30)),
+        &[ByteRange::new(0, 30)],
         &[ByteRange::new(8, 25)],
         true,
     );
     assert!(!facts.known);
+    assert_eq!(facts.captures, [captured].into());
+    assert_eq!(facts.reads, [immediate.clone()].into());
+    assert_eq!(facts.header_reads, [immediate.clone()].into());
+    assert_eq!(facts.first_body_reads, [immediate.clone()].into());
+    assert_eq!(facts.whole_body_reads, [immediate].into());
+    assert!(facts.writes.is_empty());
+    assert!(facts.receivers.is_empty());
+    assert!(facts.mutating_receivers.is_empty());
+    assert!(facts.check_of.is_none());
+}
+
+#[test]
+fn deferred_local_projection_is_not_an_outer_capture() {
+    let outer = Place::local("outer-id");
+    let deferred_local = Place::local("deferred-local-id");
+    let index = SemanticIndex {
+        anchors: vec![],
+        events: vec![
+            Event {
+                range: ByteRange::new(10, 15),
+                kind: EventKind::Define,
+                place: Some(deferred_local.clone()),
+            },
+            Event {
+                range: ByteRange::new(18, 23),
+                kind: EventKind::Read,
+                place: Some(outer.clone()),
+            },
+            Event {
+                range: ByteRange::new(25, 30),
+                kind: EventKind::Read,
+                place: Some(deferred_local.clone()),
+            },
+            Event {
+                range: ByteRange::new(25, 36),
+                kind: EventKind::Write,
+                place: Some(Place {
+                    local: deferred_local.local,
+                    projections: vec![".field".into()],
+                    is_self: false,
+                }),
+            },
+        ],
+    };
+    let facts = index.facts(
+        ByteRange::new(0, 40),
+        Some(ByteRange::new(0, 40)),
+        None,
+        &[],
+        &[ByteRange::new(8, 38)],
+        true,
+    );
+    assert_eq!(facts.captures, [outer].into());
+    assert!(facts.definitions.is_empty());
     assert!(facts.reads.is_empty());
+    assert!(facts.writes.is_empty());
+}
+
+#[test]
+fn nested_deferral_captures_are_relative_to_the_enclosing_body() {
+    let outer = Place::local("outer-id");
+    let middle = Place::local("middle-id");
+    let inner = Place::local("inner-id");
+    let index = SemanticIndex {
+        anchors: vec![],
+        events: vec![
+            Event {
+                range: ByteRange::new(10, 16),
+                kind: EventKind::Define,
+                place: Some(middle.clone()),
+            },
+            Event {
+                range: ByteRange::new(32, 37),
+                kind: EventKind::Define,
+                place: Some(inner.clone()),
+            },
+            Event {
+                range: ByteRange::new(40, 45),
+                kind: EventKind::Read,
+                place: Some(outer.clone()),
+            },
+            Event {
+                range: ByteRange::new(47, 53),
+                kind: EventKind::Read,
+                place: Some(middle.clone()),
+            },
+            Event {
+                range: ByteRange::new(55, 60),
+                kind: EventKind::Read,
+                place: Some(inner),
+            },
+        ],
+    };
+    let outer_facts = index.facts(
+        ByteRange::new(0, 80),
+        None,
+        None,
+        &[],
+        &[ByteRange::new(8, 75), ByteRange::new(30, 65)],
+        true,
+    );
+    let middle_facts = index.facts(
+        ByteRange::new(25, 70),
+        None,
+        None,
+        &[],
+        &[ByteRange::new(30, 65)],
+        true,
+    );
+    assert_eq!(outer_facts.captures, [outer.clone()].into());
+    assert_eq!(middle_facts.captures, [outer, middle].into());
+    assert!(outer_facts.reads.is_empty());
+    assert!(middle_facts.reads.is_empty());
 }
 
 #[test]
