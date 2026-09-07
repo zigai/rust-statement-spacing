@@ -64,6 +64,78 @@ fn deferred_body_use_does_not_attach_outer_control() {
 }
 
 #[test]
+fn direct_callee_ignores_nested_and_deferred_operations() {
+    let index = SemanticIndex {
+        anchors: Vec::new(),
+        events: vec![
+            Event {
+                range: ByteRange::new(0, 29),
+                kind: EventKind::DirectCallee("outer".into()),
+                place: None,
+            },
+            Event {
+                range: ByteRange::new(6, 15),
+                kind: EventKind::DirectCallee("argument".into()),
+                place: None,
+            },
+            Event {
+                range: ByteRange::new(19, 27),
+                kind: EventKind::DirectCallee("deferred".into()),
+                place: None,
+            },
+        ],
+    };
+    let facts = index.facts(
+        ByteRange::new(0, 30),
+        None,
+        None,
+        &[],
+        &[ByteRange::new(18, 28)],
+        false,
+    );
+    assert_eq!(facts.direct_callees, ["outer".into()].into());
+    let deferred = index.facts(
+        ByteRange::new(19, 28),
+        None,
+        None,
+        &[],
+        &[ByteRange::new(18, 28)],
+        false,
+    );
+    assert!(deferred.direct_callees.is_empty());
+}
+
+#[test]
+fn enclosing_expression_does_not_inherit_an_inner_callee() {
+    let index = SemanticIndex {
+        anchors: Vec::new(),
+        events: vec![Event {
+            range: ByteRange::new(0, 10),
+            kind: EventKind::DirectCallee("nested".into()),
+            place: None,
+        }],
+    };
+    let facts = index.facts(ByteRange::new(0, 20), None, None, &[], &[], false);
+    assert!(facts.direct_callees.is_empty());
+}
+
+#[test]
+fn mutable_receiver_is_not_an_assignment_write() {
+    let receiver = Place::local("collection");
+    let index = SemanticIndex {
+        anchors: Vec::new(),
+        events: vec![Event {
+            range: ByteRange::new(0, 10),
+            kind: EventKind::MutatingReceiver,
+            place: Some(receiver.clone()),
+        }],
+    };
+    let facts = index.facts(ByteRange::new(0, 20), None, None, &[], &[], false);
+    assert!(facts.writes.is_empty());
+    assert_eq!(facts.mutating_receivers, [receiver].into());
+}
+
+#[test]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "assertions define the test failure boundary and Result propagates setup errors"

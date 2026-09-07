@@ -1,5 +1,7 @@
 use std::error::Error;
 
+use rust_statement_spacing_core::config::Tail;
+
 use super::*;
 
 #[test]
@@ -78,5 +80,86 @@ fn match_arm_boundary_is_not_a_statement_boundary() -> Result<(), Box<dyn Error>
     let source =
         "fn f(x: u8) {\n    match x {\n        0 => one(),\n        _ => two(),\n    }\n}\n";
     assert_eq!(structural(source, &strict())?.0, source);
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn out_of_line_modules_remain_compact() -> Result<(), Box<dyn Error>> {
+    let source = "mod first;\nmod second;\npub(super) mod third;\npub(super) mod fourth;\n";
+    let (fixed, result) = structural(source, &Config::default())?;
+    assert_eq!(fixed, source);
+    assert!(result.findings.is_empty());
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn inline_modules_keep_major_item_boundaries() -> Result<(), Box<dyn Error>> {
+    let source = "mod before;\npub(super) mod inline {}\nmod after;\n";
+    assert_eq!(
+        structural(source, &Config::default())?.0,
+        "mod before;\n\npub(super) mod inline {}\n\nmod after;\n"
+    );
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn out_of_line_modules_respect_disabled_compact_declarations() -> Result<(), Box<dyn Error>> {
+    let source = "mod first;\npub(super) mod second;\n";
+    let mut config = Config::default();
+    config.items.compact_declarations = false;
+    assert_eq!(
+        structural(source, &config)?.0,
+        "mod first;\n\npub(super) mod second;\n"
+    );
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn final_controls_keep_after_block_boundaries() -> Result<(), Box<dyn Error>> {
+    let source = "fn f() {\n    for item in first {\n        consume(item);\n    }\n    while ready() {\n        advance();\n    }\n    for item in last {\n        consume(item);\n    }\n}\n";
+    let expected = "fn f() {\n    for item in first {\n        consume(item);\n    }\n\n    while ready() {\n        advance();\n    }\n\n    for item in last {\n        consume(item);\n    }\n}\n";
+    assert_eq!(
+        structural(source, &Config::only(&[Rule::AfterBlock]))?.0,
+        expected
+    );
+
+    // Activating the final loop must not turn empty draining into a phase.
+    let drains =
+        "fn drain() {\n    for _ in first.drain(..) {}\n    for _ in second.drain(..) {}\n}\n";
+    assert_eq!(structural(drains, &Config::default())?.0, drains);
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn value_returning_controls_remain_tail_values() -> Result<(), Box<dyn Error>> {
+    let source = "fn loop_value() -> u8 {\n    setup();\n    loop { break 42; }\n}\nfn if_value(flag: bool) -> u8 {\n    setup();\n    if flag { 1 } else { 2 }\n}\nfn match_value(flag: bool) -> u8 {\n    setup();\n    match flag { true => 1, false => 2 }\n}\n";
+    let mut config = Config::only(&[Rule::Exit]);
+    config.exits.tail = Tail::AlwaysSeparate;
+    assert_eq!(
+        structural(source, &config)?.0,
+        source.replace("setup();\n    ", "setup();\n\n    ")
+    );
+    config.exits.tail = Tail::Preserve;
+    assert_eq!(structural(source, &config)?.0, source);
     return Ok(());
 }

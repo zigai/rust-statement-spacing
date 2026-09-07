@@ -147,6 +147,41 @@ def main():
                     run(base + ["check", *arguments], fixture)
                     run(["cargo", "+1.96.0", "check", "--locked"], fixture)
 
+                    # Real compiler regressions for cohesive operation groups.
+                    grouped = (ROOT / "tests/fixtures/grouping.rs").read_bytes()
+                    source.write_bytes(grouped)
+                    run(base + ["check", *arguments], fixture)
+                    grouped_fix = run(base + ["fix", *arguments], fixture)
+                    assert not json.loads(grouped_fix.stdout)["changed_files"]
+                    assert source.read_bytes() == grouped, (
+                        "fix fragmented an intentionally cohesive operation group"
+                    )
+
+                    # Relatedness must not leak through a shared nested callee,
+                    # or turn an immutable receiver into a mutation.
+                    compact = grouped
+                    for boundary in (
+                        b"alpha(left);\n\n    beta(right);",
+                        b"alpha(identity(left));\n\n    beta(identity(right));",
+                        b"values.len();\n\n    counter += 1;",
+                        b"alpha(1);\n    }\n\n    if right",
+                        b"}\n\n    for value in third",
+                        b"}\n\n    'scan: for value in second",
+                        b"}\n\n    while remaining > 0",
+                    ):
+                        assert boundary in compact
+                        compact = compact.replace(boundary, boundary.replace(b"\n\n", b"\n"))
+                    source.write_bytes(compact)
+                    run(base + ["fix", *arguments], fixture)
+                    assert source.read_bytes() == grouped, (
+                        "fix failed to separate unrelated operations or control blocks"
+                    )
+                    (fixture / "dylint.toml").write_text(
+                        '[statement_spacing.grouping]\nexpressions="strict"\n'
+                    )
+                    run(base + ["check", *arguments], fixture, expected=(1,))
+                    (fixture / "dylint.toml").write_text("[statement_spacing]\n")
+
                     # Suppression and expectation operate at actual compiler nodes.
                     for attribute in ("allow", "expect"):
                         source.write_text(
