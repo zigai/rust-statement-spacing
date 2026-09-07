@@ -1,7 +1,9 @@
 #![cfg_attr(windows, allow(unsafe_code))]
 //! Native transactional Cargo subcommand for rustfmt-verified Dylint fixes.
 
+mod baseline;
 mod cargo;
+mod diff;
 mod protocol;
 mod report;
 mod transaction;
@@ -11,7 +13,7 @@ mod workspace;
 use std::env;
 use std::error::Error as StdError;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::result::Result as StdResult;
 
@@ -40,7 +42,7 @@ pub(crate) struct Options {
     pub(crate) manifest_path: String,
     #[arg(
         long,
-        help = "Path to the statement_spacing Dylint crate; otherwise use metadata"
+        help = "Path to the statement_spacing Dylint crate or explicit shared library; otherwise use metadata"
     )]
     pub(crate) library_path: Option<String>,
     #[arg(
@@ -50,6 +52,28 @@ pub(crate) struct Options {
     pub(crate) format_toolchain: Option<String>,
     #[arg(long, help = "Normalize inside the transaction first (fix only)")]
     pub(crate) format_first: bool,
+    #[arg(
+        long,
+        help = "Verify proposed fixes without writing source files (fix only)"
+    )]
+    pub(crate) dry_run: bool,
+    #[arg(
+        long,
+        requires = "dry_run",
+        help = "Include a unified diff of verified proposed fixes"
+    )]
+    pub(crate) diff: bool,
+    #[arg(
+        long,
+        conflicts_with = "write_baseline",
+        help = "Report only findings absent from this baseline (check only)"
+    )]
+    pub(crate) baseline: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Save current findings as a baseline .json file (check only)"
+    )]
+    pub(crate) write_baseline: Option<PathBuf>,
     #[arg(long, action = clap::ArgAction::Append)]
     pub(crate) features: Vec<String>,
     #[arg(long, conflicts_with = "features")]
@@ -91,8 +115,31 @@ fn main() -> ExitCode {
         arguments.remove(1);
     }
     let options = Options::parse_from(arguments);
-    let invalid = if options.format_first && options.command != "fix" {
-        Some("--format-first is valid only with fix")
+    let invalid = if (options.format_first || options.dry_run) && options.command != "fix" {
+        Some("--format-first and --dry-run are valid only with fix")
+    } else if (options.baseline.is_some() || options.write_baseline.is_some())
+        && options.command != "check"
+    {
+        Some("baseline options are valid only with check")
+    } else if options
+        .baseline
+        .iter()
+        .chain(options.write_baseline.iter())
+        .any(|path| {
+            return path
+                .extension()
+                .is_none_or(|extension| return extension != "json");
+        })
+    {
+        Some("baseline paths must name .json files")
+    } else if options.report.as_ref().is_some_and(|report| {
+        return options
+            .baseline
+            .iter()
+            .chain(options.write_baseline.iter())
+            .any(|baseline| return same_destination(report, baseline));
+    }) {
+        Some("report and baseline paths must differ")
     } else if options.report.as_ref().is_some_and(|path| {
         return path
             .extension()
@@ -109,6 +156,24 @@ fn main() -> ExitCode {
             .exit();
     }
     return execute(options);
+}
+
+fn same_destination(left: &Path, right: &Path) -> bool {
+    let resolve = |path: &Path| {
+        return path.canonicalize().or_else(|_| {
+            let parent = path
+                .parent()
+                .filter(|parent| return !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| return Path::new("."));
+            return parent.canonicalize().map(|parent| {
+                return path
+                    .file_name()
+                    .map_or_else(|| return parent.clone(), |name| return parent.join(name));
+            });
+        });
+    };
+    return left == right
+        || matches!((resolve(left), resolve(right)), (Ok(left), Ok(right)) if left == right);
 }
 
 fn execute(options: Options) -> ExitCode {

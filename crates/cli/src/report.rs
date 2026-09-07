@@ -49,6 +49,13 @@ pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, m
         if let Some(error) = report["error"].as_str() {
             let _ = writeln!(io::stderr(), "{error}");
         }
+        if let Some(diff) = report["diff"].as_str() {
+            print!("{diff}");
+        }
+        if status == "would-fix" {
+            let count = report["proposed_files"].as_array().map_or(0, Vec::len);
+            println!("  {count} file(s) would change; source files were not written");
+        }
         if matches!(status, "passed" | "fixed") {
             let count = report["changed_files"].as_array().map_or(0, Vec::len);
             println!(
@@ -67,12 +74,12 @@ pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, m
 }
 
 #[cfg(unix)]
-fn write_report(path: &Path, report: &Value) -> Result<()> {
+pub(crate) fn write_report(path: &Path, report: &Value) -> Result<()> {
     return atomic_json(path, report);
 }
 
 #[cfg(not(unix))]
-fn write_report(path: &Path, report: &Value) -> Result<()> {
+pub(crate) fn write_report(path: &Path, report: &Value) -> Result<()> {
     use std::io::Write;
     let parent = path
         .parent()

@@ -27,7 +27,7 @@ use tokio::{signal, time};
 
 use crate::protocol::{LintResult, MAX_JSON_BYTES, collect_edits};
 use crate::workflow::Driver;
-use crate::workspace::{canonical, relative_path};
+use crate::workspace::{canonical, digest, relative_path};
 use crate::{Result, VERSION, failure};
 #[derive(Debug)]
 pub(crate) struct Interrupted;
@@ -236,6 +236,88 @@ impl Drop for JobObject {
     }
 }
 
+fn prebuilt_library(path: &Path) -> Option<PathBuf> {
+    // Source directories always go through Dylint/Cargo's incremental build.
+    // An explicitly selected binary is the caller's responsibility to rebuild.
+    if path.is_file()
+        && path
+            .extension()
+            .and_then(|extension| return extension.to_str())
+            .is_some_and(|extension| return matches!(extension, "so" | "dylib" | "dll"))
+    {
+        return Some(path.to_path_buf());
+    }
+    return None;
+}
+
+fn has_dylint_metadata(manifest_path: &Path) -> bool {
+    if let Ok(content) = fs::read_to_string(manifest_path)
+        && let Ok(value) = toml::from_str::<toml::Value>(&content)
+    {
+        return value
+            .get("workspace")
+            .and_then(|w| return w.get("metadata"))
+            .and_then(|m| return m.get("dylint"))
+            .is_some()
+            || value
+                .get("package")
+                .and_then(|p| return p.get("metadata"))
+                .and_then(|m| return m.get("dylint"))
+                .is_some();
+    }
+    return false;
+}
+
+fn detect_toolchain(parent: &Path) -> Option<String> {
+    for ancestor in parent.ancestors() {
+        let toml_path = ancestor.join("rust-toolchain.toml");
+        if let Ok(contents) = fs::read_to_string(&toml_path)
+            && let Ok(value) = toml::from_str::<toml::Value>(&contents)
+            && let Some(channel) = value
+                .get("toolchain")
+                .and_then(|t| return t.get("channel"))
+                .and_then(toml::Value::as_str)
+        {
+            return Some(channel.to_owned());
+        }
+        let legacy_path = ancestor.join("rust-toolchain");
+        if let Ok(contents) = fs::read_to_string(&legacy_path) {
+            if let Ok(value) = toml::from_str::<toml::Value>(&contents)
+                && let Some(channel) = value
+                    .get("toolchain")
+                    .and_then(|t| return t.get("channel"))
+                    .and_then(toml::Value::as_str)
+            {
+                return Some(channel.to_owned());
+            }
+            if let Some(first_line) = contents.lines().next() {
+                let trimmed = first_line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with('[') {
+                    return Some(trimmed.to_owned());
+                }
+            }
+        }
+        if ancestor.join("Cargo.toml").is_file()
+            && let Ok(contents) = fs::read_to_string(ancestor.join("Cargo.toml"))
+            && let Ok(value) = toml::from_str::<toml::Value>(&contents)
+            && value.get("workspace").is_some()
+        {
+            break;
+        }
+    }
+    return None;
+}
+
+fn normalize_toolchain(raw: &str) -> String {
+    for arch in ["x86_64", "aarch64", "i686", "armv7", "riscv64", "powerpc64"] {
+        let pattern = format!("-{arch}-");
+        if let Some(index) = raw.find(&pattern) {
+            return raw.get(..index).unwrap_or(raw).to_owned();
+        }
+    }
+    return raw.to_owned();
+}
+
 impl Driver {
     pub(crate) fn run(
         &mut self,
@@ -439,17 +521,25 @@ impl Driver {
             .parent()
             .ok_or_else(|| return failure("Cargo manifest has no parent directory"))?;
         if self.toolchain.as_ref().is_none_or(String::is_empty) {
-            let active = self.run(
-                vec!["rustup".into(), "show".into(), "active-toolchain".into()],
-                parent,
-                None,
-                true,
-            )?;
-            self.toolchain = active.stdout.split_whitespace().next().map(str::to_owned);
-            if self.toolchain.is_none() {
-                return Err(failure(
-                    "could not identify the project's canonical Rust toolchain",
-                ));
+            if let Some(detected) = detect_toolchain(parent) {
+                self.toolchain = Some(detected);
+            } else {
+                let active = self.run(
+                    vec!["rustup".into(), "show".into(), "active-toolchain".into()],
+                    parent,
+                    None,
+                    true,
+                )?;
+                self.toolchain = active
+                    .stdout
+                    .split_whitespace()
+                    .next()
+                    .map(normalize_toolchain);
+                if self.toolchain.is_none() {
+                    return Err(failure(
+                        "could not identify the project's canonical Rust toolchain",
+                    ));
+                }
             }
         }
         let mut args = self.formatter_cargo();
@@ -564,17 +654,60 @@ impl Driver {
         let mut args = vec![self.options.cargo.clone(), "dylint".into()];
         if let Some(library) = &self.options.library_path {
             let library = canonical(Path::new(library))?;
-            let library = library.strip_prefix(original_root).map_or_else(
-                |_| return library.clone(),
-                |relative| return root.join(relative),
-            );
-            if library.is_file() {
-                args.extend(["--lib-path".into(), library.to_string_lossy().into_owned()]);
+            if let Some(prebuilt) = prebuilt_library(&library) {
+                args.extend(["--lib-path".into(), prebuilt.to_string_lossy().into_owned()]);
             } else {
+                let library = library.strip_prefix(original_root).map_or_else(
+                    |_| return library.clone(),
+                    |relative| return root.join(relative),
+                );
                 args.extend(["--path".into(), library.to_string_lossy().into_owned()]);
             }
-        } else {
+        } else if has_dylint_metadata(&root.join("Cargo.toml")) {
             args.push("--all".into());
+        } else {
+            let env_path = env::var_os("STATEMENT_SPACING_LINT_PATH")
+                .or_else(|| return env::var_os("STATEMENT_SPACING_LIBRARY_PATH"))
+                .map(PathBuf::from);
+            let local_lint = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(Path::parent)
+                .map(|p| return p.join("lint"))
+                .filter(|p| return p.join("Cargo.toml").is_file());
+            if let Some(path) = env_path.or(local_lint) {
+                if let Some(prebuilt) = prebuilt_library(&path) {
+                    args.extend(["--lib-path".into(), prebuilt.to_string_lossy().into_owned()]);
+                } else {
+                    args.extend(["--path".into(), path.to_string_lossy().into_owned()]);
+                }
+            } else {
+                args.extend([
+                    "--git".into(),
+                    "https://github.com/zigai/rust-statement-spacing".into(),
+                    "--pattern".into(),
+                    "lint".into(),
+                ]);
+            }
+        }
+        let binary_identity = args
+            .iter()
+            .position(|arg| return arg == "--lib-path")
+            .and_then(|index| return args.get(index + 1))
+            .map(|path| -> Result<Value> {
+                return Ok(json!({"path": path, "sha256": digest(&fs::read(path)?)}));
+            })
+            .transpose()?;
+        if let Some(identity) = &binary_identity {
+            if self
+                .report
+                .get("library_binary")
+                .is_some_and(|previous| return previous != identity)
+            {
+                return Err(failure(
+                    "Dylint library binary changed between verification runs",
+                ));
+            }
+            self.set_report("library_binary", identity.clone());
         }
         args.extend([
             "--workspace".into(),
@@ -598,6 +731,17 @@ impl Driver {
             args.extend(["--target".into(), target.clone()]);
         }
         let result = self.run(args, root, Some(&env), false)?;
+        if let Some(identity) = binary_identity {
+            let path = identity
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| return failure("missing library binary path"))?;
+            if identity.get("sha256").and_then(Value::as_str)
+                != Some(digest(&fs::read(path)?).as_str())
+            {
+                return Err(failure("Dylint library binary changed during verification"));
+            }
+        }
         let (findings, edits, errors) = collect_edits(root, &result.stdout)?;
         if !errors.is_empty() {
             return Err(failure(format!(
@@ -630,6 +774,28 @@ impl Driver {
                     "Dylint handshake identity or run nonce did not match",
                 ));
             }
+            let compiler = data
+                .get("compiler")
+                .and_then(Value::as_str)
+                .filter(|value| {
+                    return value.starts_with("rustc ") && value.contains("commit-hash:");
+                })
+                .ok_or_else(|| {
+                    return failure(
+                        "Dylint handshake lacks compiler identity; rebuild the lint library",
+                    );
+                })?;
+            let library_identity = json!({"version": VERSION, "compiler": compiler});
+            if self
+                .report
+                .get("library")
+                .is_some_and(|previous| return previous != &library_identity)
+            {
+                return Err(failure(
+                    "Dylint library identity changed between compiler runs",
+                ));
+            }
+            self.set_report("library", library_identity);
             handshakes.push(data);
         }
         if handshakes.is_empty() {
@@ -714,5 +880,63 @@ impl Driver {
             skipped_boundaries,
             token_hashes,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_toolchain_names_with_target_triples() {
+        assert_eq!(
+            normalize_toolchain("1.97.1-x86_64-unknown-linux-gnu"),
+            "1.97.1"
+        );
+        assert_eq!(
+            normalize_toolchain("stable-x86_64-unknown-linux-gnu"),
+            "stable"
+        );
+        assert_eq!(
+            normalize_toolchain("nightly-2026-05-28-x86_64-unknown-linux-gnu"),
+            "nightly-2026-05-28"
+        );
+        assert_eq!(normalize_toolchain("1.96.0-aarch64-apple-darwin"), "1.96.0");
+        assert_eq!(
+            normalize_toolchain("1.97.1-x86_64-pc-windows-msvc"),
+            "1.97.1"
+        );
+        assert_eq!(normalize_toolchain("1.97.1"), "1.97.1");
+    }
+
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "Assertions define test failure; Result propagates fallible filesystem fixture operations."
+    )]
+    #[test]
+    fn detects_channel_from_toolchain_toml() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("rust-toolchain.toml");
+        fs::write(&path, "[toolchain]\nchannel = \"1.97.1\"\n")?;
+        assert_eq!(detect_toolchain(temp.path()), Some("1.97.1".to_owned()));
+        return Ok(());
+    }
+
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "Assertions define test failure; Result propagates fallible filesystem fixture operations."
+    )]
+    #[test]
+    fn detects_presence_of_dylint_metadata() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("Cargo.toml");
+        fs::write(
+            &path,
+            "[workspace]\n[workspace.metadata.dylint]\nlibraries = []\n",
+        )?;
+        assert!(has_dylint_metadata(&path));
+        fs::write(&path, "[workspace]\nmembers = []\n")?;
+        assert!(!has_dylint_metadata(&path));
+        return Ok(());
     }
 }

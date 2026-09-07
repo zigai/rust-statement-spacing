@@ -101,6 +101,7 @@ elif args[0] == "dylint":
             "schema": 1,
             "library": "statement_spacing",
             "version": "0.1.0",
+            "compiler": "rustc test-double\ncommit-hash: test-double\n",
             "run_id": os.environ["STATEMENT_SPACING_RUN_ID"],
             "files": list(map(str, checked_sources)),
             "skipped_boundaries": 0,
@@ -121,6 +122,10 @@ elif args[0] == "dylint":
             handshake["token_hashes"][str(source)] = "0" * 64
         if scenario == "wrong-version":
             handshake["version"] = "99.0.0"
+        if scenario == "missing-compiler":
+            handshake.pop("compiler")
+        if scenario == "compiler-change" and label == "fixed":
+            handshake["compiler"] = "rustc changed\ncommit-hash: changed\n"
         if scenario == "coverage-change" and label == "fixed":
             handshake["files"] = []
         probe = Path(os.environ["STATEMENT_SPACING_PROBE_DIR"]) / "test.json"

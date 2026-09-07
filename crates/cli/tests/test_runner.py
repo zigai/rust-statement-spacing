@@ -125,7 +125,152 @@ class WorkspaceTest(unittest.TestCase):
         return report
 
 
+class PreviewAndBaselineTests(WorkspaceTest):
+    def test_preview_is_verified_and_patch_applies(self):
+        code, report = self.invoke(extra=("--dry-run", "--diff"))
+        self.assertEqual(code, 1, report)
+        self.assertEqual(report["status"], "would-fix")
+        self.assertEqual(report["changed_files"], [])
+        self.assertEqual(report["proposed_files"], ["src/lib.rs"])
+        self.assertTrue(report["verified"]["second_lint_run_clean"])
+        self.assertEqual(self.source.read_bytes(), SOURCE)
+        applied = subprocess.run(
+            ["git", "apply", "--no-index", "-"], input=report["diff"],
+            text=True, cwd=self.root, capture_output=True, check=False,
+        )
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(self.source.read_bytes(), FIXED)
+        code, report = self.invoke(extra=("--dry-run", "--diff"))
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["diff"], "")
+
+    def test_preview_rejects_failed_candidate(self):
+        self.assert_rejected(scenario="fmt-conflict", extra=("--dry-run",))
+
+    def test_preview_format_first_does_not_write(self):
+        unformatted = SOURCE.replace(b"fn sample", b"fn  sample")
+        self.source.write_bytes(unformatted)
+        code, report = self.invoke(extra=("--dry-run", "--format-first", "--diff"))
+        self.assertEqual(code, 1, report)
+        self.assertEqual(self.source.read_bytes(), unformatted)
+        self.assertIn("-pub fn  sample", report["diff"])
+
+    def test_baseline_tracks_context_and_multiplicity(self):
+        baseline = self.root / "baseline.json"
+        code, report = self.invoke("check", extra=("--write-baseline", str(baseline)))
+        self.assertEqual(code, 0, report)
+        self.assertEqual(self.source.read_bytes(), SOURCE)
+        code, report = self.invoke("check", extra=("--baseline", str(baseline)))
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["baseline_matched"], 1)
+        self.assertEqual(report["findings"], [])
+        prefix = b"// unrelated addition\n"
+        self.source.write_bytes(prefix + SOURCE)
+        items = [diagnostic("src/lib.rs", self.start + len(prefix), self.end + len(prefix), rule="statement_spacing_bindings")]
+        # Capture the double's original wording so only location changes.
+        code, original_report = self.invoke("check")
+        items[0]["message"]["message"] = original_report["findings"][0]["message"]
+        code, report = self.invoke("check", extra=("--baseline", str(baseline)), diagnostics="\n".join(map(json.dumps, items)))
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["baseline_matched"], 1)
+        self.source.write_bytes(prefix + SOURCE + SOURCE)
+        items.append(diagnostic("src/lib.rs", self.start + len(prefix) + len(SOURCE), self.end + len(prefix) + len(SOURCE)))
+        items[1]["message"]["message"] = items[0]["message"]["message"]
+        code, report = self.invoke("check", extra=("--baseline", str(baseline)), diagnostics="\n".join(map(json.dumps, items)))
+        self.assertEqual(code, 1, report)
+        self.assertEqual(len(report["findings"]), 1)
+
+    def test_baseline_rejects_different_coverage_and_malformed_counts(self):
+        baseline = self.root / "baseline.json"
+        code, report = self.invoke("check", extra=("--write-baseline", str(baseline)))
+        self.assertEqual(code, 0, report)
+        self.assert_rejected(command="check", extra=("--baseline", str(baseline), "--all-features"))
+        data = json.loads(baseline.read_text())
+        data["findings"] = {"0" * 64: -1}
+        baseline.write_text(json.dumps(data))
+        self.assert_rejected(command="check", extra=("--baseline", str(baseline)))
+
+    def test_report_cannot_overwrite_baseline_through_path_alias(self):
+        baseline = self.root / "baseline.json"
+        baseline.write_text("preserve this baseline")
+        process = subprocess.run(
+            [str(BINARY), "check", "--baseline", "baseline.json", "--report", str(baseline)],
+            cwd=self.root, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("report and baseline paths must differ", process.stderr)
+        self.assertEqual(baseline.read_text(), "preserve this baseline")
+
+    def test_library_compiler_identity_is_required_and_stable(self):
+        self.assert_rejected(scenario="missing-compiler")
+        self.assert_rejected(scenario="compiler-change")
+
+    def test_source_library_does_not_select_existing_binary(self):
+        library = self.root / "rules"
+        output = library / "target/release"
+        output.mkdir(parents=True)
+        (library / "Cargo.toml").write_text('[package]\nname="rules"\nversion="0.1.0"\n')
+        (output / "libstatement_spacing@old.so").write_bytes(b"stale")
+        code, report = self.invoke("check", extra=("--library-path", str(library)))
+        self.assertEqual(code, 1, report)
+        self.assertNotIn("--lib-path", json.dumps(report["commands"]))
+        self.assertIn("--path", json.dumps(report["commands"]))
+
+    def test_explicit_binary_is_fingerprinted_even_in_ignored_target(self):
+        output = self.root / "target/release"
+        output.mkdir(parents=True)
+        library = output / "libstatement_spacing@test.so"
+        library.write_bytes(b"explicit library")
+        code, report = self.invoke(extra=("--library-path", str(library)))
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["library_binary"]["sha256"], hashlib.sha256(library.read_bytes()).hexdigest())
+        self.assertIn("--lib-path", json.dumps(report["commands"]))
+
+
 class EditTests(WorkspaceTest):
+    def test_duplicate_targets_share_one_finding_and_edit(self):
+        items = [
+            diagnostic("src/lib.rs", self.start, self.end, package="library"),
+            diagnostic("./src/lib.rs", self.start, self.end, package="library-test"),
+        ]
+        lines = "\n".join(map(json.dumps, items))
+        for command, expected_code in (("check", 1), ("fix", 0)):
+            with self.subTest(command=command):
+                code, report = self.invoke(command, diagnostics=lines)
+                self.assertEqual(code, expected_code, report)
+                self.assertEqual(len(report["findings"]), 1)
+                self.assertEqual(report["rule_counts"], {"statement_spacing_bindings": 1})
+                self.assertEqual(report["findings"][0]["byte_start"], self.start)
+        self.assertEqual(self.source.read_bytes(), FIXED)
+
+    def test_distinct_boundaries_on_one_line_remain_distinct(self):
+        self.source.write_bytes(b"fn sample() { one(); two(); three(); }\n")
+        data = self.source.read_bytes()
+        items = [
+            diagnostic("src/lib.rs", start, start + 1, "\n\n")
+            for start in (data.index(b" two()"), data.index(b" three()"))
+        ]
+        code, report = self.invoke(
+            "check", diagnostics="\n".join(map(json.dumps, items * 2))
+        )
+        self.assertEqual(code, 1, report)
+        self.assertEqual(len(report["findings"]), 2)
+        self.assertEqual(report["rule_counts"], {"statement_spacing_bindings": 2})
+        self.assertNotEqual(
+            report["findings"][0]["byte_start"], report["findings"][1]["byte_start"]
+        )
+
+    def test_duplicate_findings_do_not_hide_target_conflicts_or_missing_fixes(self):
+        for unfixable in (False, True):
+            with self.subTest(unfixable=unfixable):
+                first = diagnostic("src/lib.rs", self.start, self.end)
+                second = diagnostic("src/lib.rs", self.start, self.end, "\n\n\n    ")
+                if unfixable:
+                    second["message"]["children"] = []
+                self.assert_rejected(
+                    diagnostics="\n".join(map(json.dumps, [first, second]))
+                )
+
     def test_invalid_edits_preserve_original(self):
         for start, end, replacement in (
             (-1, 2, "\n"),
@@ -219,6 +364,36 @@ class EditTests(WorkspaceTest):
 
 
 class SnapshotTests(WorkspaceTest):
+    def test_nested_repository_ignores_match_in_snapshot_without_git_metadata(self):
+        for marker_is_directory in (False, True):
+            with self.subTest(marker_is_directory=marker_is_directory):
+                self.source.write_bytes(SOURCE)
+                vendor = self.root / f"vendor/dependency-{marker_is_directory}"
+                (vendor / "zig-out").mkdir(parents=True)
+                (vendor / ".zig-cache").mkdir()
+                (vendor / "src/generated").mkdir(parents=True)
+                if marker_is_directory:
+                    (vendor / ".git").mkdir()
+                else:
+                    (vendor / ".git").write_text(
+                        "gitdir: ../../.git/modules/dependency\n"
+                    )
+                (vendor / ".gitignore").write_text("/zig-out/\n/.zig-cache/\n")
+                (vendor / "src/.gitignore").write_text("/generated/\n")
+                (vendor / "zig-out/Cargo.toml").write_text("not a valid manifest")
+                (vendor / ".zig-cache/output").write_text("cache artifact")
+                (vendor / "src/generated/output").write_text("generated artifact")
+                (vendor / "src/source.txt").write_text("source dependency")
+                code, report = self.invoke()
+                self.assertEqual(code, 0, report)
+                self.assertEqual(self.source.read_bytes(), FIXED)
+                self.assertEqual(
+                    (vendor / "zig-out/Cargo.toml").read_text(), "not a valid manifest"
+                )
+                self.assertEqual(
+                    (vendor / "src/source.txt").read_text(), "source dependency"
+                )
+
     def test_build_and_state_dirs_ignored(self):
         for name in ("target", ".git", ".statement-spacing", "__pycache__"):
             (self.root / name).mkdir()
@@ -505,6 +680,43 @@ class SubprocessWorkflowTests(WorkspaceTest):
         code, report = self.invoke(command="recover")
         self.assertEqual(code, 0, report)
         self.assertEqual(report["recovered_transactions"], [])
+
+    def test_toolchain_detected_from_rust_toolchain_toml(self):
+        (self.root / "rust-toolchain.toml").write_text(
+            '[toolchain]\nchannel = "1.97.1"\n', encoding="utf-8"
+        )
+        env = os.environ.copy()
+        env.update(
+            PYTHON=sys.executable,
+            STATEMENT_SPACING_CARGO=str(FAKE_CARGO),
+            STATEMENT_SPACING_FAKE_SCENARIO="normal",
+            STATEMENT_SPACING_FAKE_ORIGINAL=str(self.root),
+        )
+        env.pop("STATEMENT_SPACING_FAKE_DIAGNOSTICS", None)
+        env.pop("RUSTFMT", None)
+        process = subprocess.run(
+            [
+                str(BINARY),
+                "fix",
+                "--manifest-path",
+                str(self.root / "Cargo.toml"),
+                "--json",
+            ],
+            cwd=self.root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+        report = json.loads(process.stdout)
+        self.assertEqual(process.returncode, 0, report)
+        self.assertEqual(report["formatter"]["toolchain"], "1.97.1")
+        fmts = [
+            c["argv"]
+            for c in report["commands"]
+            if "fmt" in c["argv"] and "--manifest-path" in c["argv"]
+        ]
+        self.assertTrue(all(c[1] == "+1.97.1" for c in fmts))
 
 
 if __name__ == "__main__":

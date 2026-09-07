@@ -1,3 +1,4 @@
+use globset::{GlobBuilder, GlobMatcher};
 #[cfg(unix)]
 use rustix::fs::{Mode, OFlags, open};
 use serde_json::Value;
@@ -23,6 +24,131 @@ const IGNORED_DIRS: [&str; 6] = [
     ".venv",
     "node_modules",
 ];
+
+#[derive(Clone, Debug)]
+struct GitIgnoreRule {
+    matcher: GlobMatcher,
+    anchored: bool,
+    must_be_dir: bool,
+    negated: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GitIgnore {
+    base: PathBuf,
+    rules: Vec<GitIgnoreRule>,
+}
+
+impl GitIgnore {
+    pub(crate) fn parse(base: PathBuf, content: &str) -> Self {
+        let mut rules = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim_end();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let (negated, pattern) = trimmed.strip_prefix('!').map_or_else(
+                || {
+                    return trimmed
+                        .strip_prefix(r"\!")
+                        .or_else(|| return trimmed.strip_prefix(r"\#"))
+                        .map_or((false, trimmed), |rest| return (false, rest));
+                },
+                |rest| return (true, rest),
+            );
+            if pattern.is_empty() {
+                continue;
+            }
+            let (must_be_dir, pattern) = pattern
+                .strip_suffix('/')
+                .map_or((false, pattern), |rest| return (true, rest));
+            if pattern.is_empty() {
+                continue;
+            }
+            let (anchored, pattern) = pattern.strip_prefix('/').map_or_else(
+                || return (pattern.contains('/'), pattern),
+                |rest| return (true, rest),
+            );
+            if let Ok(glob) = GlobBuilder::new(pattern).literal_separator(true).build() {
+                rules.push(GitIgnoreRule {
+                    matcher: glob.compile_matcher(),
+                    anchored,
+                    must_be_dir,
+                    negated,
+                });
+            }
+        }
+        return Self { base, rules };
+    }
+
+    pub(crate) fn matches(&self, relative_path: &Path, is_dir: bool) -> Option<bool> {
+        let path_in_base = relative_path.strip_prefix(&self.base).ok()?;
+        let path_str = path_in_base.to_str()?.replace('\\', "/");
+        let file_name = path_in_base
+            .file_name()
+            .and_then(|name| return name.to_str());
+        let mut matched = None;
+        for rule in &self.rules {
+            if rule.must_be_dir && !is_dir {
+                continue;
+            }
+            let is_match = if rule.anchored {
+                rule.matcher.is_match(&path_str)
+            } else if let Some(file_name) = file_name {
+                rule.matcher.is_match(file_name)
+            } else {
+                false
+            };
+            if is_match {
+                matched = Some(!rule.negated);
+            }
+        }
+        return matched;
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GitIgnoreStack {
+    ignores: Vec<GitIgnore>,
+}
+
+impl GitIgnoreStack {
+    pub(crate) fn push_dir(&mut self, root: &Path, dir: &Path) {
+        let Ok(relative) = dir.strip_prefix(root) else {
+            return;
+        };
+        // Git metadata is deliberately absent from replicas. Nested ignore
+        // files must therefore apply equally with and without a .git marker.
+        let gitignore_path = dir.join(".gitignore");
+        if let Ok(content) = fs::read_to_string(&gitignore_path) {
+            self.ignores
+                .push(GitIgnore::parse(relative.to_path_buf(), &content));
+        }
+    }
+
+    pub(crate) fn is_ignored(&self, relative: &Path, is_dir: bool) -> bool {
+        let mut ignored = false;
+        for gitignore in &self.ignores {
+            if let Some(state) = gitignore.matches(relative, is_dir) {
+                ignored = state;
+            }
+        }
+        return ignored;
+    }
+
+    pub(crate) fn is_path_or_parent_ignored(&self, relative: &Path) -> bool {
+        let mut current = PathBuf::new();
+        let components: Vec<_> = relative.components().collect();
+        for (i, component) in components.iter().enumerate() {
+            current.push(component);
+            let is_dir = i + 1 < components.len();
+            if self.is_ignored(&current, is_dir) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FileState {
@@ -162,7 +288,12 @@ pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>> {
     return Ok(data);
 }
 
-fn file_link(root: &Path, path: &Path, exclusions: &[PathBuf]) -> Result<PathBuf> {
+fn file_link(
+    root: &Path,
+    path: &Path,
+    exclusions: &[PathBuf],
+    gitignores: &GitIgnoreStack,
+) -> Result<PathBuf> {
     let original = fs::read_link(path)?;
     let mut link = original.clone();
     let mut current = path.to_path_buf();
@@ -191,13 +322,14 @@ fn file_link(root: &Path, path: &Path, exclusions: &[PathBuf]) -> Result<PathBuf
         }) || exclusions
             .iter()
             .any(|excluded| return relative.starts_with(excluded))
+            || gitignores.is_path_or_parent_ignored(&relative)
         {
             return Err(failure(format!(
                 "symlink targets excluded path: {}",
                 path.display()
             )));
         }
-        current = root.join(relative);
+        current = root.join(&relative);
         let parent = current
             .parent()
             .ok_or_else(|| return failure("symlink target has no parent"))?;
@@ -224,9 +356,14 @@ fn file_link(root: &Path, path: &Path, exclusions: &[PathBuf]) -> Result<PathBuf
 pub(crate) fn scan(root: &Path, limit: u64, exclusions: &[PathBuf]) -> Result<Snapshot> {
     let mut result = BTreeMap::new();
     let mut total = 0_u64;
+    let mut gitignores = GitIgnoreStack::default();
+    gitignores.push_dir(root, root);
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
-        let mut entries = fs::read_dir(directory)?.collect::<io::Result<Vec<_>>>()?;
+        if directory != root {
+            gitignores.push_dir(root, &directory);
+        }
+        let mut entries = fs::read_dir(&directory)?.collect::<io::Result<Vec<_>>>()?;
         entries.sort_by_key(fs::DirEntry::file_name);
         for entry in entries {
             let name = entry.file_name();
@@ -242,12 +379,16 @@ pub(crate) fn scan(root: &Path, limit: u64, exclusions: &[PathBuf]) -> Result<Sn
                 continue;
             }
             let info = fs::symlink_metadata(&path)?;
-            if info.is_dir() {
+            let is_dir = info.is_dir();
+            if gitignores.is_ignored(relative, is_dir) {
+                continue;
+            }
+            if is_dir {
                 pending.push(path);
                 continue;
             }
             let link = if info.file_type().is_symlink() {
-                Some(file_link(root, &path, exclusions)?)
+                Some(file_link(root, &path, exclusions, &gitignores)?)
             } else {
                 None
             };
@@ -342,6 +483,8 @@ pub(crate) fn copy_snapshot(
             replica.display()
         )));
     }
+    let mut gitignores = GitIgnoreStack::default();
+    gitignores.push_dir(root, root);
     fs::create_dir_all(replica)?;
     for (name, state) in files {
         let source = root.join(name);
@@ -350,7 +493,7 @@ pub(crate) fn copy_snapshot(
                 .parent()
                 .ok_or_else(|| return failure("symlink has no parent"))?;
             assert_no_symlink(root, parent)?;
-            if file_link(root, &source, exclusions)? != *link {
+            if file_link(root, &source, exclusions, &gitignores)? != *link {
                 return Err(failure(format!("source changed while copying: {name}")));
             }
             link.as_os_str().as_encoded_bytes().to_vec()
@@ -486,7 +629,12 @@ fn validate_manifest_value(path: &Path, value: &toml::Value) -> Result<()> {
 
 pub(crate) fn validate_manifest_paths(root: &Path, exclusions: &[PathBuf]) -> Result<()> {
     let mut pending = vec![root.to_path_buf()];
+    let mut gitignores = GitIgnoreStack::default();
+    gitignores.push_dir(root, root);
     while let Some(directory) = pending.pop() {
+        if directory != root {
+            gitignores.push_dir(root, &directory);
+        }
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
             let path = entry.path();
@@ -498,11 +646,15 @@ pub(crate) fn validate_manifest_paths(root: &Path, exclusions: &[PathBuf]) -> Re
                 continue;
             }
             let kind = entry.file_type()?;
-            if kind.is_dir()
-                && !IGNORED_DIRS
-                    .iter()
-                    .any(|ignored| return entry.file_name() == *ignored)
+            let is_dir = kind.is_dir();
+            if IGNORED_DIRS
+                .iter()
+                .any(|ignored| return entry.file_name() == *ignored)
+                || gitignores.is_ignored(relative, is_dir)
             {
+                continue;
+            }
+            if is_dir {
                 pending.push(entry.path());
             } else if entry.file_name() == "Cargo.toml" && !kind.is_dir() {
                 let path = entry.path();
@@ -592,7 +744,8 @@ mod tests {
         }
         symlink("../external", root.join("indirect"))?;
         symlink("indirect", root.join("link"))?;
-        assert!(file_link(&root, &root.join("link"), &[]).is_err());
+        let gitignores = GitIgnoreStack::default();
+        assert!(file_link(&root, &root.join("link"), &[], &gitignores).is_err());
         return Ok(());
     }
 
@@ -624,6 +777,62 @@ mod tests {
         assert_snapshot(&root, &original, 1024, &exclusions)?;
         symlink("results/new-output", root.join("bypass"))?;
         assert!(scan(&root, 1024, &exclusions).is_err());
+        return Ok(());
+    }
+
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "Assertions define test failure; Result propagates fallible filesystem fixture operations."
+    )]
+    #[test]
+    fn snapshot_honors_gitignore_and_ignores_fifos_and_build_artifacts() -> Result<()> {
+        use rustix::fs::{CWD, mkfifoat};
+
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().join("source");
+        let replica = temporary.path().join("replica");
+        fs::create_dir_all(root.join("benchmarks/results"))?;
+        fs::create_dir_all(root.join("packages/typescript/node_modules"))?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join(".gitignore"),
+            "/benchmarks/results/\nnode_modules/\n*.ignored\n.env.*\n!.env.example\n",
+        )?;
+        mkfifoat(
+            CWD,
+            root.join("benchmarks/results/large-live.fifo"),
+            Mode::RUSR | Mode::WUSR,
+        )?;
+        fs::write(
+            root.join("packages/typescript/node_modules/package.json"),
+            "{}",
+        )?;
+        fs::write(root.join("src/lib.rs"), "pub fn run() {}")?;
+        fs::write(root.join("file.ignored"), "not tracked")?;
+        fs::write(root.join(".env.example"), "PUBLIC_KEY=123")?;
+        fs::write(root.join(".env.secret"), "SECRET_KEY=456")?;
+
+        let original = scan(&root, 1024 * 1024, &[])?;
+        assert!(original.contains_key(".gitignore"));
+        assert!(original.contains_key("src/lib.rs"));
+        assert!(original.contains_key(".env.example"));
+        assert!(!original.contains_key(".env.secret"));
+        assert!(!original.contains_key("file.ignored"));
+        assert!(!original.contains_key("packages/typescript/node_modules/package.json"));
+        assert!(!original.contains_key("benchmarks/results/large-live.fifo"));
+
+        copy_snapshot(&root, &replica, &original, &[])?;
+        assert_eq!(
+            fs::read_to_string(replica.join("src/lib.rs"))?,
+            "pub fn run() {}"
+        );
+        assert!(!replica.join("benchmarks").exists());
+        assert!(!replica.join("packages/typescript/node_modules").exists());
+        assert!(!replica.join(".env.secret").exists());
+        assert_eq!(
+            fs::read_to_string(replica.join(".env.example"))?,
+            "PUBLIC_KEY=123"
+        );
         return Ok(());
     }
 }

@@ -8,6 +8,7 @@ struct Probe<'a> {
     schema: u32,
     library: &'static str,
     version: &'static str,
+    compiler: &'static str,
     run_id: &'a str,
     files: &'a [String],
     skipped_boundaries: usize,
@@ -30,7 +31,8 @@ pub(crate) fn emit(
     let data = Probe {
         schema: 1,
         library: "statement_spacing",
-        version: "0.1.0",
+        version: env!("CARGO_PKG_VERSION"),
+        compiler: include_str!(concat!(env!("OUT_DIR"), "/compiler.txt")),
         run_id: &run_id,
         files,
         skipped_boundaries,

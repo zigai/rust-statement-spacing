@@ -1,9 +1,13 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::str;
 
 use serde_json::{Value, json};
 
-use crate::{Options, Result, VERSION, cargo, failure, protocol, transaction, workspace};
+use crate::{
+    Options, Result, VERSION, baseline, cargo, diff, failure, protocol, report, transaction,
+    workspace,
+};
 
 pub(crate) struct Driver {
     pub(crate) options: Options,
@@ -25,7 +29,7 @@ impl Driver {
         };
     }
 
-    fn set_report(&mut self, key: &str, value: Value) {
+    pub(crate) fn set_report(&mut self, key: &str, value: Value) {
         if let Some(map) = self.report.as_object_mut() {
             map.insert(key.into(), value);
         }
@@ -93,8 +97,35 @@ impl Driver {
             self.fmt(&replica, true)?;
         }
         let before_lint = workspace::scan(&replica, limit, &exclusions)?;
-        let first = self.lint(&replica, temporary.path(), "initial", &root)?;
+        let mut first = self.lint(&replica, temporary.path(), "initial", &root)?;
         workspace::assert_snapshot(&replica, &before_lint, limit, &exclusions)?;
+        let mut features: Vec<_> = self
+            .options
+            .features
+            .iter()
+            .flat_map(|value| return value.split(','))
+            .collect();
+        features.sort_unstable();
+        features.dedup();
+        let coverage = json!({
+            "workspace": true, "all_targets": true, "features": features,
+            "all_features": self.options.all_features, "no_default_features": self.options.no_default_features,
+            "target": self.options.target,
+            "snapshot_exclusions": exclusions,
+        });
+        self.set_report("coverage", coverage.clone());
+        let baseline_document =
+            if self.options.baseline.is_some() || self.options.write_baseline.is_some() {
+                let fingerprints = baseline::fingerprints(&replica, &first.findings)?;
+                if let Some(path) = &self.options.baseline {
+                    let matched =
+                        baseline::filter(path, &coverage, &fingerprints, &mut first.findings)?;
+                    self.set_report("baseline_matched", json!(matched));
+                }
+                Some(baseline::document(&fingerprints, &coverage))
+            } else {
+                None
+            };
         let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
         for finding in &first.findings {
             let rule = finding
@@ -107,14 +138,18 @@ impl Driver {
         self.set_report("findings", json!(first.findings));
         self.set_report("checked_files", json!(first.checked_files));
         self.set_report("skipped_boundaries", json!(first.skipped_boundaries));
-        self.set_report("coverage", json!({
-            "workspace": true, "all_targets": true, "features": self.options.features,
-            "all_features": self.options.all_features, "no_default_features": self.options.no_default_features,
-            "target": self.options.target,
-        }));
         cargo::check_interrupted()?;
         if self.options.command == "check" {
             workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
+            if let Some(path) = &self.options.write_baseline {
+                let document = baseline_document
+                    .as_ref()
+                    .ok_or_else(|| return failure("missing baseline document"))?;
+                report::write_report(path, document)?;
+                self.set_report("baseline_written", json!(path));
+                self.set_report("status", "baselined".into());
+                return Ok(0);
+            }
             self.set_report(
                 "status",
                 if first.findings.is_empty() {
@@ -171,6 +206,43 @@ impl Driver {
         }
         self.set_report("proposed_files", json!(changed.keys().collect::<Vec<_>>()));
         cargo::check_interrupted()?;
+        if self.options.dry_run {
+            workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
+            if self.identity(&root)? != identity {
+                return Err(failure("formatter identity changed during verification"));
+            }
+            if self.options.diff {
+                let mut patch = String::new();
+                for (name, bytes) in &changed {
+                    patch.push_str(&diff::unified(
+                        name,
+                        &fs::read_to_string(root.join(name))?,
+                        str::from_utf8(bytes)?,
+                    )?);
+                }
+                self.set_report("diff", patch.into());
+            }
+            workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
+            self.set_report(
+                "status",
+                if changed.is_empty() {
+                    "passed"
+                } else {
+                    "would-fix"
+                }
+                .into(),
+            );
+            self.set_report(
+                "verified",
+                json!({
+                    "rustfmt_candidate": true, "second_lint_run_clean": true,
+                    "concurrent_edits_guarded": true, "code_comment_literal_tokens_preserved": true,
+                    "rustfmt_original_directory": false,
+                }),
+            );
+            temporary.close()?;
+            return Ok(u8::from(!changed.is_empty()));
+        }
         let final_check = || {
             if self.identity(&root)? != identity {
                 return Err(failure("formatter identity changed during the transaction"));

@@ -112,6 +112,16 @@ def main():
                     temporary = Path(name)
                     fixture = temporary / "fixture"
                     shutil.copytree(ROOT / "tests/workspaces/basic", fixture)
+                    # Nested Git metadata is omitted from replicas, but its
+                    # ignore policy must remain identical during every scan.
+                    dependency = fixture / "vendor/native-library"
+                    (dependency / "zig-out").mkdir(parents=True)
+                    (dependency / ".zig-cache").mkdir()
+                    (dependency / ".git").write_text("gitdir: ../../.git/modules/native-library\n")
+                    (dependency / ".gitignore").write_text("/zig-out/\n/.zig-cache/\n")
+                    (dependency / "zig-out/artifact").write_bytes(b"ignored build output")
+                    (dependency / ".zig-cache/artifact").write_bytes(b"ignored cache output")
+                    (dependency / "source.txt").write_text("dependency source\n")
                     source = fixture / "src/lib.rs"
                     before = source.read_bytes()
                     expected = (ROOT / "tests/fixtures/basic.fixed.rs").read_bytes()
@@ -128,16 +138,33 @@ def main():
                     run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
                     first = run(base + ["check", *arguments], fixture, expected=(1,))
                     first_report = json.loads(first.stdout)
+                    assert len(first_report["findings"]) == 1, (
+                        "library and test compilations duplicated a finding"
+                    )
+                    assert first_report["rule_counts"] == {"statement_spacing_bindings": 1}
                     assert any(
                         f["rule"] == "statement_spacing_bindings"
                         for f in first_report["findings"]
                     )
                     assert source.read_bytes() == before, "check modified source"
+                    preview = run(base + ["fix", "--dry-run", "--diff", *arguments], fixture, expected=(1,))
+                    preview_report = json.loads(preview.stdout)
+                    assert preview_report["verified"]["second_lint_run_clean"]
+                    assert preview_report["changed_files"] == []
+                    assert preview_report["diff"].startswith("--- ")
+                    assert source.read_bytes() == before, "preview modified source"
+                    baseline = temporary / "baseline.json"
+                    run(base + ["check", "--write-baseline", baseline, *arguments], fixture)
+                    baselined = run(base + ["check", "--baseline", baseline, *arguments], fixture)
+                    assert json.loads(baselined.stdout)["baseline_matched"] == 1
+                    assert source.read_bytes() == before, "baseline modified source"
                     fixed = run(base + ["fix", *arguments], fixture)
                     assert json.loads(fixed.stdout)["verified"]["second_lint_run_clean"]
                     assert source.read_bytes() == expected, (
                         "fixed output differs from explicit golden file"
                     )
+                    assert (dependency / "zig-out/artifact").read_bytes() == b"ignored build output"
+                    assert (dependency / "source.txt").read_text() == "dependency source\n"
                     # Hard requirement: use --check; do not write-format the candidate.
                     run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
                     again = run(base + ["fix", *arguments], fixture)
@@ -168,6 +195,9 @@ def main():
                         b"}\n\n    for value in third",
                         b"}\n\n    'scan: for value in second",
                         b"}\n\n    while remaining > 0",
+                        b"black_box(&raw const value);\n\n    return value;",
+                        b"let _fill_later = || &raw mut value;\n\n    return value;",
+                        b"let registered = generated.len();\n\n    let mut checked_in",
                     ):
                         assert boundary in compact
                         compact = compact.replace(boundary, boundary.replace(b"\n\n", b"\n"))
@@ -202,6 +232,9 @@ def main():
                     # Native Dylint --fix path, independently of the verified wrapper.
                     (fixture / "dylint.toml").write_text("[statement_spacing]\n")
                     source.write_bytes(before)
+                    # The synthetic submodule marker was needed for verified
+                    # snapshot checks; it is not a real Git repository.
+                    (dependency / ".git").unlink()
                     run(["git", "init", "-q"], fixture)
                     run(["git", "add", "."], fixture)
                     run(

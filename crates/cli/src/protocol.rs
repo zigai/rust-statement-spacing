@@ -28,6 +28,17 @@ pub(crate) struct LintResult {
     pub(crate) token_hashes: BTreeMap<String, String>,
 }
 
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct FindingKey {
+    file: Option<String>,
+    start: Option<u64>,
+    end: Option<u64>,
+    line: Option<u64>,
+    column: Option<u64>,
+    rule: String,
+    message: String,
+}
+
 fn spacing_rule(rule: &str) -> bool {
     return matches!(
         rule.strip_prefix("statement_spacing_"),
@@ -71,7 +82,7 @@ pub(crate) fn collect_edits(
     if lines.len() as u64 > MAX_JSON_BYTES {
         return Err(failure("Cargo JSON output exceeds the verification limit"));
     }
-    let mut findings = Vec::new();
+    let mut findings = BTreeMap::<FindingKey, Value>::new();
     let mut edits = BTreeMap::<(String, usize, usize), Edit>::new();
     let mut errors = Vec::new();
     for line in lines.lines() {
@@ -134,13 +145,43 @@ pub(crate) fn collect_edits(
         if let Some(name) = file.as_str().filter(|name| return !name.is_empty()) {
             file = Value::String(resolve_name(name)?.1);
         }
-        findings.push(json!({
+        let position = |field| {
+            return primary
+                .and_then(|span| return span.get(field))
+                .and_then(Value::as_u64);
+        };
+        let key = FindingKey {
+            file: file.as_str().map(str::to_owned),
+            start: position("byte_start"),
+            end: position("byte_end"),
+            line: position("line_start"),
+            column: position("column_start"),
+            rule: rule.to_owned(),
+            message: diagnostic
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        };
+        let finding = json!({
             "rule": rule,
-            "message": diagnostic.get("message").unwrap_or(&Value::String(String::new())),
+            "message": key.message,
             "file": file,
-            "line": primary.and_then(|span| return span.get("line_start")),
+            "line": key.line,
+            "column": key.column,
+            "byte_start": key.start,
+            "byte_end": key.end,
             "fixable": proposals.len() == 1
-        }));
+        });
+        findings
+            .entry(key)
+            .and_modify(|previous| {
+                // A target without an unambiguous fix must still block fixing.
+                previous["fixable"] = json!(previous["fixable"] == true && proposals.len() == 1);
+            })
+            .or_insert(finding);
+        // Always validate every target's proposals, including duplicate
+        // diagnostics, so deduplication cannot hide conflicting replacements.
         if proposals.len() != 1 {
             continue;
         }
@@ -226,7 +267,7 @@ pub(crate) fn collect_edits(
             )));
         }
     }
-    return Ok((findings, ordered, errors));
+    return Ok((findings.into_values().collect(), ordered, errors));
 }
 
 pub(crate) fn apply(root: &Path, edits: &[Edit]) -> Result<()> {
