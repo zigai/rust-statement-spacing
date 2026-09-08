@@ -66,6 +66,7 @@ fn build_decisions(
         &cohesive,
         &mut decisions,
     );
+    local::normalize(config, source, global_rules, list, &mut decisions);
     setup::apply(config, global_rules, list, &cohesive, &mut decisions);
     local::cap_blank_lines(global_rules, list, &mut decisions);
     return decisions;

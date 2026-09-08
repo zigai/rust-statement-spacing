@@ -1,6 +1,6 @@
 //! Mandatory joins and group-independent spacing constraints.
 
-use super::decisions::{Decision, blocked, enabled, join, put, separate};
+use super::decisions::{Decision, blocked, enabled, join, optional_join, put, separate};
 use super::guard_pair;
 use super::visual;
 use crate::config::{Bindings, Config, Expressions, GuardChain, ImmediateCheck, Separation, Tail};
@@ -42,22 +42,6 @@ pub(super) fn apply(
                     "keep this Result/Option producer and its immediate check together",
                 ),
             );
-        } else if config.grouping.join_related
-            && a.kind.is_binding()
-            && b.kind.ordinary()
-            && !b.is_tail
-            && direct_producer(&a.facts, &b.facts, &config.grouping)
-        {
-            put(
-                global_rules,
-                list,
-                decisions,
-                i,
-                join(
-                    Rule::Bindings,
-                    "keep this direct producer/consumer pair together",
-                ),
-            );
         }
     }
 
@@ -80,7 +64,13 @@ pub(super) fn apply(
                 || (kinds.iter().all(|kind| {
                     return matches!(
                         kind,
-                        UnitKind::Item(ItemKind::Import | ItemKind::Constant | ItemKind::Compact)
+                        UnitKind::Item(
+                            ItemKind::Import
+                                | ItemKind::Constant
+                                | ItemKind::Module
+                                | ItemKind::Alias
+                                | ItemKind::Compact
+                        )
                     );
                 }) && (a.kind != b.kind || !config.items.compact_declarations));
             if required {
@@ -96,6 +86,32 @@ pub(super) fn apply(
                     ),
                 );
             }
+            continue;
+        }
+        if config.grouping.join_related
+            && config.grouping.expressions == Expressions::Multiline
+            && config.grouping.bindings == Bindings::Multiline
+            && let Some(boundary) = visual::assertion_boundary(config, list, i)
+        {
+            if !boundary && list.gaps.get(i).is_none_or(|gap| return !gap.joinable) {
+                continue;
+            }
+            let rule = if a.kind.is_binding() || b.kind.is_binding() {
+                Rule::Bindings
+            } else {
+                Rule::Expressions
+            };
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                if boundary {
+                    separate(rule, 90, "separate this test assertion phase")
+                } else {
+                    join(rule, "keep this test assertion step together")
+                },
+            );
             continue;
         }
         let compact_policy = config.grouping.expressions != Expressions::Strict;
@@ -223,6 +239,7 @@ pub(super) fn apply(
                 || b.kind == UnitKind::UnsafeBlock
                 || relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Related);
         if a.kind.ends_block()
+            && !(config.grouping.join_related && visual::guard_continuation(a, b))
             && !completion_exit
             && !visual_tail
             && !guards
@@ -244,6 +261,26 @@ pub(super) fn apply(
                     Rule::AfterBlock,
                     70,
                     "start a new logical group after this standalone block",
+                ),
+            );
+        }
+        // Normalization separates standalone conditionals, including setup
+        // before a return. Only an early-exit guard can attach that return.
+        if config.grouping.join_related
+            && a.kind == UnitKind::Control
+            && matches!(a.shape.form, Form::Conditional | Form::CallCheck)
+            && !visual::guard_continuation(a, b)
+            && config.control_flow.after_block == Separation::Separate
+        {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                separate(
+                    Rule::AfterBlock,
+                    95,
+                    "start a new phase after this conditional",
                 ),
             );
         }
@@ -343,6 +380,119 @@ pub(super) fn apply(
                 );
             }
         }
+    }
+}
+
+pub(super) fn normalize(
+    config: &Config,
+    source: &str,
+    global_rules: RuleMask,
+    list: &UnitList,
+    decisions: &mut [Option<Decision>],
+) {
+    if !config.grouping.join_related {
+        return;
+    }
+    for i in 0..list.gaps.len() {
+        let (Some(a), Some(b), Some(gap)) =
+            (list.units.get(i), list.units.get(i + 1), list.gaps.get(i))
+        else {
+            continue;
+        };
+        if blocked(list, i) || !gap.joinable {
+            continue;
+        }
+        let rule = if a.kind.is_item() || b.kind.is_item() {
+            if a.kind != b.kind
+                || !config.items.compact_declarations
+                || !matches!(
+                    a.kind,
+                    UnitKind::Item(
+                        ItemKind::Import
+                            | ItemKind::Constant
+                            | ItemKind::Module
+                            | ItemKind::Alias
+                            | ItemKind::Compact
+                    )
+                )
+            {
+                continue;
+            }
+            Rule::ItemSpacing
+        } else if b.kind == UnitKind::Exit || (b.is_tail && b.kind != UnitKind::Control) {
+            if config.exits.tail == Tail::Preserve || !visual::guard_continuation(a, b) {
+                continue;
+            }
+            Rule::Exit
+        } else if b.kind == UnitKind::Control {
+            // Result checks own their boundary even with their rule suppressed
+            // or configured to preserve. Do not replace them with a generic join.
+            if b.facts.check_of.is_some()
+                || config.grouping.bindings == Bindings::Preserve
+                || config.grouping.expressions == Expressions::Preserve
+                || config.grouping.expressions == Expressions::Strict
+                || !a.kind.ordinary()
+                || !b.is_guard
+                || b.shape.form == Form::CallCheck
+                || !(intersects(
+                    &a.facts.definitions,
+                    &b.facts.header_reads,
+                    config.grouping.self_fields,
+                ) || (a.kind == UnitKind::Expression
+                    && config.control_flow.guard_chain == GuardChain::Contextual
+                    && !visual::validation_stages(list)
+                    && intersects(
+                        &a.facts.reads,
+                        &b.facts.header_reads,
+                        config.grouping.self_fields,
+                    )))
+            {
+                continue;
+            }
+            Rule::ControlFlow
+        } else {
+            if !a.kind.ordinary() || !b.kind.ordinary() {
+                continue;
+            }
+            let bindings = a.kind.is_binding() && b.kind.is_binding();
+            if (a.kind.is_binding() || b.kind.is_binding())
+                && config.grouping.bindings == Bindings::Preserve
+                || (!bindings
+                    && matches!(
+                        config.grouping.expressions,
+                        Expressions::Preserve | Expressions::Strict
+                    ))
+            {
+                continue;
+            }
+            let short_setup = a.kind == UnitKind::Let
+                && b.kind == UnitKind::Let
+                && matches!(
+                    config.grouping.bindings,
+                    Bindings::Consecutive | Bindings::SameKind | Bindings::Multiline
+                )
+                && [a, b].iter().all(|unit| {
+                    return !matches!(
+                        unit.shape.form,
+                        Form::LetElse
+                            | Form::Branch
+                            | Form::Conditional
+                            | Form::Macro
+                            | Form::Closure
+                    ) && source
+                        .get(unit.code_range.as_range())
+                        .is_some_and(|text| return !text.contains('\n'));
+                });
+            if !short_setup && !visual::related_join(config, source, a, b) {
+                continue;
+            }
+            if a.kind.is_binding() || b.kind.is_binding() {
+                Rule::Bindings
+            } else {
+                Rule::Expressions
+            }
+        };
+        put(global_rules, list, decisions, i, optional_join(rule));
     }
 }
 

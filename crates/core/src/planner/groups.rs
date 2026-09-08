@@ -31,7 +31,8 @@ pub(super) fn cohesive(config: &Config, list: &UnitList) -> Vec<bool> {
             let gap = index - 1;
             if blocked(list, gap)
                 || list.gaps.get(gap).is_none_or(|gap| {
-                    return gap.blank_lines != 0 || !gap.joinable;
+                    return (!config.grouping.join_related && gap.blank_lines != 0)
+                        || !gap.joinable;
                 })
                 || !(unit.kind.ordinary() || unit.kind == UnitKind::Control)
                 || (unit.is_tail

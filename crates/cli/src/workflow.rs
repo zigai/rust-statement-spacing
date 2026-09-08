@@ -94,6 +94,18 @@ impl Driver {
         let metadata: Value = serde_json::from_str(&metadata.stdout)?;
         workspace::validate_metadata(&replica, &metadata)?;
         if self.options.format_first {
+            // Establish declaration groups before rustfmt sorts imports within
+            // them. Otherwise removing blank lines destroys the group's order
+            // before the whitespace-only lint can reconstruct its boundaries.
+            let before_layout = workspace::scan(&replica, limit, &exclusions)?;
+            let mut layout = self.lint(&replica, temporary.path(), "declarations", &root)?;
+            workspace::assert_snapshot(&replica, &before_layout, limit, &exclusions)?;
+            layout
+                .edits
+                .retain(|edit| return edit.rule == "statement_spacing_item_spacing");
+            self.set_report("preformat_declaration_edits", json!(layout.edits.len()));
+            self.set_report("preformat_findings", json!(layout.findings));
+            protocol::apply(&replica, &layout.edits)?;
             self.fmt(&replica, true)?;
         }
         let before_lint = workspace::scan(&replica, limit, &exclusions)?;

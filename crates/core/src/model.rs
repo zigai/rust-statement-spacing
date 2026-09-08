@@ -184,11 +184,15 @@ pub enum ItemKind {
     Function,
     /// Major declaration such as a struct or implementation.
     Major,
-    /// Imports and external crate declarations.
+    /// Imports, reexports, and external crate declarations.
     Import,
     /// Constant and static value declarations.
     Constant,
-    /// Other compact declarations, including type aliases and out-of-line modules.
+    /// Out-of-line module declarations.
+    Module,
+    /// Type alias declarations.
+    Alias,
+    /// Other compact declarations, including functions without bodies.
     Compact,
     /// Syntax whose interior is not analyzed.
     Opaque,
@@ -266,11 +270,29 @@ pub enum Form {
     LetElse,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+/// Mutually exclusive syntactic roles used to recognize test phases.
+pub enum StatementRole {
+    /// No specialized test-phase evidence.
+    #[default]
+    Ordinary,
+    /// A directly written assertion macro; its token tree remains opaque.
+    Assertion,
+    /// A binding extracting a place, optionally through unwrap/expect.
+    Extraction,
+    /// A free/associated call, optionally followed by unwrap/expect.
+    FunctionCall,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 /// Syntactic visual-grouping evidence; never a substitute for resolved places.
 pub struct Shape {
     /// Outer initializer or expression form after transparent wrappers.
     pub form: Form,
+    /// Syntactic role; semantic dependencies still determine phase membership.
+    pub role: StatementRole,
+    /// Direct executable statements in the nearest enclosing `#[test]` function.
+    pub test_statements: Option<usize>,
     /// Whether this binding introduces mutable state.
     pub mutable: bool,
     /// Whether immediate evaluation contains error propagation.

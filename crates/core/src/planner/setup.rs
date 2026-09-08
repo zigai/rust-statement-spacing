@@ -1,6 +1,8 @@
 //! Monotone setup-group splitting over the effective boundary layout.
 
-use super::decisions::{Decision, blocked, effective_blank, enabled, put, separate};
+use super::decisions::{
+    Decision, blocked, effective_blank, enabled, mandatory_join, optional_join, put, separate,
+};
 use super::guard_pair;
 use super::visual;
 use crate::config::{Bindings, Config, Expressions, GuardChain, Overflow, UseIn};
@@ -14,8 +16,8 @@ pub(super) fn apply(
     cohesive: &[bool],
     decisions: &mut [Option<Decision>],
 ) {
-    // Monotone closure: setup splitting adds separators only. Reconsider affected
-    // groups before exposing edits, rather than requiring another user fix pass.
+    // Monotone closure: optional joins can strengthen into required separators.
+    // Reconsider affected groups before exposing edits, not on a later fix pass.
     for _ in 0..=list.gaps.len() {
         let mut changed = false;
         for control in 1..list.units.len() {
@@ -31,7 +33,7 @@ pub(super) fn apply(
                 || !enabled(global_rules, unit, Rule::ControlFlow)
                 || blocked(list, gap)
                 || guard_pair(config, gap_unit, unit)
-                || effective_blank(list, decisions, gap) > 0
+                || effective_blank(list, decisions, gap, config.grouping.join_related) > 0
                 || cohesive.get(gap) == Some(&true)
             {
                 continue;
@@ -72,7 +74,8 @@ pub(super) fn apply(
                 let mut start = gap;
                 while start > 0
                     && !blocked(list, start - 1)
-                    && effective_blank(list, decisions, start - 1) == 0
+                    && effective_blank(list, decisions, start - 1, config.grouping.join_related)
+                        == 0
                     && list
                         .units
                         .get(start - 1)
@@ -122,14 +125,19 @@ pub(super) fn apply(
                     continue;
                 }
             }
-            if !unit.facts.known && config.grouping.max_before_control != 0 {
+            if !unit.facts.known
+                && unit.facts.writes.is_empty()
+                && unit.facts.mutating_receivers.is_empty()
+                && config.grouping.max_before_control != 0
+            {
                 continue;
             }
             let mut group_start = gap;
             while group_start > 0 {
                 let previous_gap = group_start - 1;
                 if blocked(list, previous_gap)
-                    || effective_blank(list, decisions, previous_gap) > 0
+                    || effective_blank(list, decisions, previous_gap, config.grouping.join_related)
+                        > 0
                     || !list
                         .units
                         .get(previous_gap)
@@ -160,8 +168,8 @@ pub(super) fn apply(
                 // affirmative non-deferred mutation facts extend the read scope;
                 // a later read or shared receiver alone is not enough. Keep this
                 // in the bounded setup scan, not an indivisible producer pair.
-                let initializes_updated_state = unit.facts.known
-                    && config.grouping.expressions != Expressions::Strict
+                let initializes_updated_state = config.grouping.expressions != Expressions::Strict
+                    && (unit.facts.known || unit.shape.form == Form::Loop)
                     && config.grouping.use_in != UseIn::Header
                     && (intersects(&provided, &unit.facts.writes, config.grouping.self_fields)
                         || intersects(
@@ -191,6 +199,12 @@ pub(super) fn apply(
                     // claim that the called method mutates its receiver.
                     provided.extend(setup.facts.receivers.clone());
                 }
+                // Unknown effects cannot prove a read relationship, but do not
+                // invalidate an independently resolved non-deferred mutation.
+                if !unit.facts.known && !initializes_updated_state {
+                    unknown = true;
+                    break;
+                }
                 if !initializes_updated_state
                     && !intersects(&provided, &needed, config.grouping.self_fields)
                 {
@@ -209,7 +223,7 @@ pub(super) fn apply(
                 && decisions
                     .get(atomic_start - 1)
                     .and_then(|d| return d.as_ref())
-                    .is_some_and(|d| return d.blanks == 0)
+                    .is_some_and(mandatory_join)
             {
                 atomic_start -= 1;
             }
@@ -248,13 +262,30 @@ pub(super) fn apply(
                     }
                 }
             };
+            if config.grouping.join_related
+                && config.grouping.bindings != Bindings::Preserve
+                && config.grouping.expressions != Expressions::Preserve
+                && unit.shape.form == Form::Loop
+                && accumulator_start < control
+                && limit > 0
+                && boundary != Some(gap)
+                && list.gaps.get(gap).is_some_and(|gap| return gap.joinable)
+            {
+                changed |= put(
+                    global_rules,
+                    list,
+                    decisions,
+                    gap,
+                    optional_join(Rule::ControlFlow),
+                );
+            }
             if let Some(mut boundary) = boundary {
                 // Expand the retained suffix backwards to the start of a
                 // joined component; never split a mandatory pair in its middle.
                 while decisions
                     .get(boundary)
                     .and_then(|d| return d.as_ref())
-                    .is_some_and(|d| return d.blanks == 0)
+                    .is_some_and(mandatory_join)
                     && boundary > group_start
                 {
                     boundary -= 1;
@@ -262,7 +293,7 @@ pub(super) fn apply(
                 if decisions
                     .get(boundary)
                     .and_then(|d| return d.as_ref())
-                    .is_some_and(|d| return d.blanks == 0)
+                    .is_some_and(mandatory_join)
                 {
                     continue;
                 }

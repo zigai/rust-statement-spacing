@@ -78,7 +78,7 @@ option_enum!(
     GuardChain, Allow,
     /// Permit guards to remain adjacent to following code.
     Allow => "allow",
-    /// Separate code after if blocks, except an immediately following return.
+    /// Separate code after if blocks; only an early-exit guard may attach a return.
     Contextual => "contextual",
     /// Apply normal block separation after guards.
     Separate => "separate");

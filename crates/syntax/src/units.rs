@@ -73,12 +73,12 @@ fn item_kind(node: &SyntaxNode) -> ItemKind {
             {
                 return ItemKind::Major;
             } else {
-                return ItemKind::Compact;
+                return ItemKind::Module;
             }
         }
         SyntaxKind::USE | SyntaxKind::EXTERN_CRATE => return ItemKind::Import,
         SyntaxKind::CONST | SyntaxKind::STATIC => return ItemKind::Constant,
-        SyntaxKind::TYPE_ALIAS => return ItemKind::Compact,
+        SyntaxKind::TYPE_ALIAS => return ItemKind::Alias,
         SyntaxKind::MACRO_CALL | SyntaxKind::MACRO_RULES | SyntaxKind::MACRO_DEF => {
             return ItemKind::Opaque;
         }

@@ -78,9 +78,29 @@ pub(super) fn join(rule: Rule, message: &'static str) -> Decision {
     };
 }
 
-pub(super) fn effective_blank(list: &UnitList, decisions: &[Option<Decision>], i: usize) -> usize {
+pub(super) fn optional_join(rule: Rule) -> Decision {
+    let mut decision = join(rule, "remove this separator within a cohesive phase");
+    decision.priority = 20;
+    return decision;
+}
+
+pub(super) fn mandatory_join(decision: &Decision) -> bool {
+    return decision.blanks == 0 && decision.priority == 100;
+}
+
+pub(super) fn effective_blank(
+    list: &UnitList,
+    decisions: &[Option<Decision>],
+    i: usize,
+    normalize: bool,
+) -> usize {
     if let Some(Some(d)) = decisions.get(i) {
         return d.blanks;
     }
-    return list.gaps.get(i).map_or(0, |g| return g.blank_lines);
+    return list.gaps.get(i).map_or(0, |g| {
+        if normalize && g.joinable && !blocked(list, i) {
+            return 0;
+        }
+        return g.blank_lines;
+    });
 }

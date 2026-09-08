@@ -1,7 +1,7 @@
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 use rust_statement_spacing_core::edits::is_trivia;
 use rust_statement_spacing_core::{
-    ByteRange, Facts, Rule, RuleMask, SourceModel, Unit, UnitKind, UnitList,
+    ByteRange, Facts, Rule, RuleMask, SourceModel, StatementRole, Unit, UnitKind, UnitList,
 };
 
 use crate::comments::classify_gap;
@@ -13,10 +13,27 @@ use crate::units::{
     is_expression, is_item, is_unit, range, unit_kind,
 };
 
-fn make_unit(node: &SyntaxNode, semantics: Option<&SemanticIndex>) -> Unit {
+fn make_unit(
+    node: &SyntaxNode,
+    semantics: Option<&SemanticIndex>,
+    test_statements: Option<usize>,
+) -> Unit {
     let code = code_range(node);
     let expression = expression_node(node);
-    let category = unit_kind(node);
+    let mut shape = shape::shape(node);
+    shape.test_statements = test_statements;
+    let category = if shape.role == StatementRole::Assertion
+        && test_statements.is_some()
+        && node
+            .parent()
+            .is_some_and(|parent| return parent.kind() == SyntaxKind::STMT_LIST)
+    {
+        // Statement-position macros also parse as items. Known assertion
+        // invocations execute here; their token trees still remain opaque.
+        UnitKind::Expression
+    } else {
+        unit_kind(node)
+    };
     let header = if category == UnitKind::Control {
         let end = control_body_start(&expression).unwrap_or(code.end);
         Some(ByteRange::new(code.start, end))
@@ -67,7 +84,7 @@ fn make_unit(node: &SyntaxNode, semantics: Option<&SemanticIndex>) -> Unit {
         range: range(node),
         code_range: code,
         kind: category,
-        shape: shape::shape(node),
+        shape,
         is_tail: is_expression(node) && !is_item(node),
         is_guard: guard(&expression),
         is_empty_loop: expression.kind() == SyntaxKind::FOR_EXPR
@@ -116,6 +133,7 @@ pub(crate) fn lower(
         if (k != SyntaxKind::STMT_LIST && !item_list) || inside_token_tree(&container) {
             continue;
         }
+        let test_statements = shape::test_statements(&container);
         let units: Vec<_> = container
             .children()
             .filter(|node| {
@@ -125,7 +143,33 @@ pub(crate) fn lower(
                     return is_unit(node);
                 }
             })
-            .map(|node| return make_unit(&node, semantics))
+            .map(|node| {
+                let unit = make_unit(&node, semantics, test_statements);
+                if unit.active && !unit.protected && unit.enabled.has(Rule::Layout) {
+                    for attribute in node
+                        .children()
+                        .filter(|child| return child.kind() == SyntaxKind::ATTR)
+                    {
+                        let Some(space) = attribute.next_sibling_or_token() else {
+                            continue;
+                        };
+                        if space.kind() == SyntaxKind::WHITESPACE
+                            && space
+                                .next_sibling_or_token()
+                                .is_some_and(|next| return next.kind() != SyntaxKind::COMMENT)
+                        {
+                            model.layout_edges.push((
+                                ByteRange::new(
+                                    u32::from(space.text_range().start()) as usize,
+                                    u32::from(space.text_range().end()) as usize,
+                                ),
+                                unit.anchor,
+                            ));
+                        }
+                    }
+                }
+                return unit;
+            })
             .collect();
         let gaps = units
             .windows(2)

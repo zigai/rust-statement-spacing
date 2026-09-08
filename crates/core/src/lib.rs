@@ -13,7 +13,7 @@ pub mod text;
 pub use config::Config;
 pub use edits::{Edit, apply_edits};
 pub use model::{
-    ByteRange, Facts, Form, Gap, ItemKind, Place, Rule, RuleMask, Scope, Shape, SourceModel, Unit,
-    UnitKind, UnitList,
+    ByteRange, Facts, Form, Gap, ItemKind, Place, Rule, RuleMask, Scope, Shape, SourceModel,
+    StatementRole, Unit, UnitKind, UnitList,
 };
 pub use planner::{Finding, Plan, plan};

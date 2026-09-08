@@ -1,8 +1,70 @@
 //! Visual phases constrained by syntax and affirmative compiler dependencies.
 
 use crate::config::Config;
-use crate::model::{Form, Scope, Unit, UnitKind, UnitList};
+use crate::model::{Form, Scope, StatementRole, Unit, UnitKind, UnitList};
 use crate::relations::{Relationship, intersects, relationship};
+
+/// Test assertions form phases, but an immediate operation/check remains one step.
+pub(super) fn assertion_boundary(config: &Config, list: &UnitList, index: usize) -> Option<bool> {
+    let a = list.units.get(index)?;
+    let b = list.units.get(index + 1)?;
+    let count = a.shape.test_statements?;
+    if !a.kind.ordinary() || !b.kind.ordinary() {
+        return None;
+    }
+    if a.shape.role == StatementRole::Assertion && b.shape.role == StatementRole::Assertion {
+        return Some(false);
+    }
+    if b.shape.role == StatementRole::Assertion {
+        let operation_check = a.kind == UnitKind::Let
+            && a.shape.role != StatementRole::Extraction
+            && matches!(a.shape.form, Form::Call | Form::Method)
+            && intersects(
+                &a.facts.definitions,
+                &b.facts.reads,
+                config.grouping.self_fields,
+            );
+        return Some(count > config.exits.short_block_max_statements && !operation_check);
+    }
+    if a.shape.role == StatementRole::Assertion {
+        let verification = b.shape.role == StatementRole::FunctionCall
+            && index
+                .checked_sub(1)
+                .and_then(|previous| return list.units.get(previous))
+                .is_some_and(|operation| {
+                    return operation.kind == UnitKind::Let
+                        && operation.shape.role != StatementRole::Extraction
+                        && intersects(
+                            &operation.facts.definitions,
+                            &a.facts.reads,
+                            config.grouping.self_fields,
+                        )
+                        && intersects(
+                            &operation.facts.reads,
+                            &b.facts.reads,
+                            config.grouping.self_fields,
+                        );
+                });
+        if verification {
+            return Some(false);
+        }
+        return Some(count > config.exits.short_block_max_statements);
+    }
+    if b.shape.role == StatementRole::Extraction
+        && list
+            .units
+            .get(index + 2)
+            .is_some_and(|next| return next.shape.role == StatementRole::Assertion)
+        && intersects(
+            &a.facts.definitions,
+            &b.facts.reads,
+            config.grouping.self_fields,
+        )
+    {
+        return Some(false);
+    }
+    return None;
+}
 
 pub(super) fn validation_stages(list: &UnitList) -> bool {
     return list
@@ -21,6 +83,8 @@ pub(super) fn validation_stages(list: &UnitList) -> bool {
 pub(super) fn guard_continuation(a: &Unit, b: &Unit) -> bool {
     return a.kind == UnitKind::Control
         && matches!(a.shape.form, Form::Conditional | Form::CallCheck)
+        && a.is_guard
+        && a.shape.exiting_guard
         && b.kind == UnitKind::Exit
         && !b.is_loop_exit;
 }
@@ -50,7 +114,9 @@ fn mutation(unit: &Unit) -> bool {
 
 fn resource_pair(config: &Config, a: &Unit, b: &Unit) -> bool {
     let settings = config.grouping.self_fields;
-    return intersects(&a.facts.receivers, &b.facts.receivers, settings)
+    return (a.shape.form == Form::Method
+        && b.shape.form == Form::Method
+        && intersects(&a.facts.receivers, &b.facts.receivers, settings))
         || intersects(&a.facts.writes, &b.facts.writes, settings)
         || intersects(
             &a.facts.mutating_receivers,
@@ -92,21 +158,91 @@ fn same_string(source: &str, a: &Unit, b: &Unit) -> bool {
     });
 }
 
+/// Affirmative visual connections, not the absence of a reason to separate.
+pub(super) fn related_join(config: &Config, source: &str, a: &Unit, b: &Unit) -> bool {
+    let settings = config.grouping.self_fields;
+    let producer = intersects(&a.facts.definitions, &b.facts.reads, settings);
+    let short_a = source
+        .get(a.code_range.as_range())
+        .is_some_and(|text| return text.lines().count() <= 2);
+    let short_b = source
+        .get(b.code_range.as_range())
+        .is_some_and(|text| return !text.contains('\n'));
+    return (producer
+        && (a.shape.form == Form::LetElse
+            || a.shape.form == Form::Closure
+            || (a.shape.form == Form::Value && b.kind.is_binding())
+            || b.kind == UnitKind::Assignment
+            || mutation(b)
+            || (short_a && short_b && b.kind.ordinary())
+            || (b.kind.is_binding()
+                && ((short_a && short_b)
+                    || (a.facts.definitions.len() > 1 && short_b)
+                    || (b.shape.error_handler.is_some()
+                        && source
+                            .get(b.code_range.as_range())
+                            .is_some_and(|text| return text.lines().count() <= 2))))))
+        || (a.kind.is_binding()
+            && b.kind.is_binding()
+            && a.shape.error_handler.is_some()
+            && a.shape.error_handler == b.shape.error_handler
+            && (producer
+                || intersects(&a.facts.reads, &b.facts.reads, settings)
+                // Shared callback captures connect these parallel computations;
+                // they are not evidence that either callback has executed.
+                || intersects(&a.facts.captures, &b.facts.captures, settings)))
+        || (a.shape.mutable
+            && (intersects(&a.facts.definitions, &b.facts.writes, settings)
+                || intersects(&a.facts.definitions, &b.facts.mutating_receivers, settings)))
+        || (b.kind.ordinary()
+            && (intersects(&a.facts.writes, &b.facts.reads, settings)
+                || intersects(&a.facts.mutating_receivers, &b.facts.reads, settings)))
+        || (a.kind.ordinary() && b.kind.ordinary() && resource_pair(config, a, b))
+        || (a.kind == UnitKind::Assignment
+            && !mutation(b)
+            && intersects(&a.facts.reads, &b.facts.reads, settings));
+}
+
 pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: usize) -> bool {
     let (Some(a), Some(b)) = (list.units.get(index), list.units.get(index + 1)) else {
         return false;
     };
     let text = |unit: &Unit| return source.get(unit.code_range.as_range()).unwrap_or("");
     let multiline = text(a).contains('\n');
+    // A shared mutable input does not collapse selection, construction, and
+    // conditional configuration into a single visual phase.
+    if a.kind.is_binding()
+        && multiline
+        && ((matches!(a.shape.form, Form::Conditional | Form::Branch)
+            && b.kind.is_binding()
+            && text(b).contains('\n'))
+            || (b.kind == UnitKind::Control
+                && matches!(b.shape.form, Form::Conditional | Form::CallCheck)
+                && !b.shape.exiting_guard))
+    {
+        return true;
+    }
+    if config.grouping.join_related && related_join(config, source, a, b) {
+        return false;
+    }
     let producer = intersects(
         &a.facts.definitions,
         &b.facts.reads,
         config.grouping.self_fields,
     );
-    if a.shape.form == Form::LetElse {
+    if a.shape.form == Form::LetElse && producer {
         return false;
     }
-    if a.shape.error_handler.is_some() && a.shape.error_handler == b.shape.error_handler {
+    if a.shape.error_handler.is_some()
+        && a.shape.error_handler == b.shape.error_handler
+        && (producer
+            || intersects(&a.facts.reads, &b.facts.reads, config.grouping.self_fields)
+            || intersects(
+                &a.facts.captures,
+                &b.facts.captures,
+                config.grouping.self_fields,
+            ))
+    {
         return false;
     }
     if producer

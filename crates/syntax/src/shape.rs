@@ -2,10 +2,10 @@ use ra_ap_syntax::{
     AstNode, SyntaxKind, SyntaxNode,
     ast::{self, HasArgList as _},
 };
-use rust_statement_spacing_core::{ByteRange, Form, Scope, Shape};
+use rust_statement_spacing_core::{ByteRange, Form, Scope, Shape, StatementRole};
 
 use crate::units::{
-    control_body_start, deferred_ranges, expression_node, is_expression, is_unit, range,
+    control_body_start, deferred_ranges, expression_node, is_expression, is_item, is_unit, range,
 };
 
 fn unwrapped(mut node: SyntaxNode) -> SyntaxNode {
@@ -70,6 +70,92 @@ fn handler(mut node: SyntaxNode) -> Option<String> {
         let receiver = call.receiver()?;
         node = receiver.syntax().clone();
     }
+}
+
+fn assertion(node: &SyntaxNode) -> bool {
+    let call = ast::MacroCall::cast(node.clone()).or_else(|| {
+        return node.children().find_map(ast::MacroCall::cast);
+    });
+    let Some(path) = call.and_then(|call| return call.path()) else {
+        return false;
+    };
+    return matches!(
+        path.syntax().text().to_string().as_str(),
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "std::assert"
+            | "std::assert_eq"
+            | "std::assert_ne"
+            | "core::assert"
+            | "core::assert_eq"
+            | "core::assert_ne"
+    );
+}
+
+fn extraction(node: &SyntaxNode) -> bool {
+    match node.kind() {
+        SyntaxKind::PATH_EXPR => return true,
+        SyntaxKind::FIELD_EXPR => {
+            return node
+                .children()
+                .find(is_expression)
+                .is_some_and(|base| return extraction(&base));
+        }
+        SyntaxKind::METHOD_CALL_EXPR => {
+            let Some(call) = ast::MethodCallExpr::cast(node.clone()) else {
+                return false;
+            };
+            return call.name_ref().is_some_and(|name| {
+                return matches!(name.text().as_str(), "unwrap" | "expect");
+            }) && call.receiver().is_some_and(|receiver| {
+                return extraction(receiver.syntax());
+            }) && call.arg_list().is_none_or(|args| {
+                return args
+                    .args()
+                    .all(|arg| return arg.syntax().kind() == SyntaxKind::LITERAL);
+            });
+        }
+        _ => return false,
+    }
+}
+
+pub(crate) fn test_statements(container: &SyntaxNode) -> Option<usize> {
+    let function = container
+        .ancestors()
+        .find(|node| return node.kind() == SyntaxKind::FN)?;
+    let test = function
+        .children()
+        .filter(|node| return node.kind() == SyntaxKind::ATTR)
+        .any(|attr| {
+            let mut tokens = attr
+                .descendants_with_tokens()
+                .filter_map(|element| return element.into_token())
+                .filter(|token| return !token.kind().is_trivia());
+            return ["#", "[", "test", "]"].iter().all(|expected| {
+                return tokens
+                    .next()
+                    .is_some_and(|token| return token.text() == *expected);
+            }) && tokens.next().is_none();
+        });
+    if !test {
+        return None;
+    }
+    return function
+        .children()
+        .find(|node| return node.kind() == SyntaxKind::BLOCK_EXPR)
+        .and_then(|body| {
+            return body
+                .children()
+                .find(|node| return node.kind() == SyntaxKind::STMT_LIST);
+        })
+        .map(|body| {
+            return body
+                .children()
+                .filter(is_unit)
+                .filter(|node| return !is_item(node) || assertion(node))
+                .count();
+        });
 }
 
 pub(crate) fn shape(node: &SyntaxNode) -> Shape {
@@ -141,6 +227,24 @@ pub(crate) fn shape(node: &SyntaxNode) -> Shape {
             });
     return Shape {
         form,
+        role: if binding.is_none() && form == Form::Macro && assertion(&root) {
+            StatementRole::Assertion
+        } else if binding.is_some() && extraction(&root) {
+            StatementRole::Extraction
+        } else if root.kind() == SyntaxKind::CALL_EXPR
+            || ast::MethodCallExpr::cast(root).is_some_and(|call| {
+                return call.name_ref().is_some_and(|name| {
+                    return matches!(name.text().as_str(), "unwrap" | "expect");
+                }) && call.receiver().is_some_and(|receiver| {
+                    return receiver.syntax().kind() == SyntaxKind::CALL_EXPR;
+                });
+            })
+        {
+            StatementRole::FunctionCall
+        } else {
+            StatementRole::Ordinary
+        },
+        test_statements: None,
         mutable: binding
             .and_then(|stmt| return stmt.pat())
             .is_some_and(|pat| {
