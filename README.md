@@ -122,8 +122,9 @@ use_in = "header-or-first-body-statement"
 # limit in either mode; any separator goes before those accumulator bindings.
 overflow = "whole-group"
 
-# When true, automatically removes blank lines between related statements.
-# When false, existing blank lines between related statements are preserved.
+# When true, removes optional separators with positive relationship evidence.
+# Required separators, preserved/disabled rules, and comment boundaries win.
+# When false, optional existing separators are preserved.
 join_related = false
 
 
@@ -137,8 +138,8 @@ after_block = "separate"
 # continue or a top-level `?`, with no else branch.
 # - "allow":    keep guards adjacent to following code (default).
 # - "separate": apply normal block separation after guards.
-# - "contextual": separate following work after if blocks; an immediately
-#                 following explicit return may remain adjacent.
+# - "contextual": separate following work after if blocks; an explicit return
+#                 may remain adjacent only after an early-exit guard.
 guard_chain = "allow"
 
 # Keep receiver-centered groups together, including local buffers and change
@@ -199,22 +200,11 @@ functions = "separate"
 # - "preserve": retain existing spacing.
 major_items = "separate"
 
-# Keep compact declarations within each family adjacent. Imports, constants/
-# statics, and other compact declarations (such as type aliases) form separate groups.
+# Keep compact declarations within each family adjacent: imports/reexports,
+# out-of-line modules, constants/statics, type aliases, and other compact
+# declarations. Import origins (crate, std, external) do not split a group.
 compact_declarations = true
 ```
-
-For layout-led grouping, set `grouping.bindings = "multiline"` and
-`grouping.expressions = "multiline"`. These opt-in modes combine rustfmt's line
-wrapping with compiler-resolved dependencies, resource operations, and matching
-error adapters. `control_flow.guard_chain = "contextual"` separates code after
-if blocks except an immediately following explicit return; `exits.tail = "visual"`
-separates completion phases while retaining compact values. Mandatory Result/Option joins,
-rule suppression, and explicit settings retain precedence. Defaults are unchanged.
-
-Multiline grouping is a visual heuristic, not a reconstruction of author intent:
-parallel computations and semantic phase boundaries can still need manual blank
-lines. Optional existing blank lines remain preserved unless joining is enabled.
 
 ---
 
