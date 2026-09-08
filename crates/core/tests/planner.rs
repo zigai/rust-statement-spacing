@@ -659,7 +659,7 @@ fn mandatory_check_pair_still_separates_unrelated_prefix() -> Result<(), Box<dyn
     clippy::panic_in_result_fn,
     reason = "assertions define the test failure boundary and Result propagates setup errors"
 )]
-fn setup_overflow_preserves_entire_mandatory_check_component() -> Result<(), Box<dyn Error>> {
+fn setup_overflow_keeps_only_the_mandatory_check_pair_atomic() -> Result<(), Box<dyn Error>> {
     let mut control = facts(&[], &["result"]);
     control.header_reads = places(&["result"]);
     control.check_of = Some(Place::local("result"));
@@ -682,7 +682,7 @@ fn setup_overflow_preserves_entire_mandatory_check_component() -> Result<(), Box
         config.grouping.join_related = true;
         let (source, initial_model) = model(&kinds, &semantics, &[0, 1, 1]);
         let first = plan(&config, &source, &initial_model)?;
-        let (expected, fixed_model) = model(&kinds, &semantics, &[1, 0, 0]);
+        let (expected, fixed_model) = model(&kinds, &semantics, &[0, 1, 0]);
         assert_eq!(
             apply_edits(&source, &first.edits())?,
             expected,

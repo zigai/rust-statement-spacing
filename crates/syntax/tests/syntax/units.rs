@@ -117,6 +117,81 @@ fn compact_declarations_separate_families_not_individual_items() -> Result<(), B
 }
 
 #[test]
+fn import_origins_do_not_split_a_contiguous_group() {
+    let source = "use crate::support::*;\n\nuse std::env;\n\npub use external::{First, Second};\n";
+    let expected = "use crate::support::*;\nuse std::env;\npub use external::{First, Second};\n";
+    let mut config = Config::default();
+    config.grouping.join_related = true;
+    assert_eq!(
+        structural(source, &config).map(|(fixed, _)| return fixed),
+        Ok(expected.to_owned())
+    );
+    assert_eq!(
+        structural(expected, &config).map(|(fixed, _)| return fixed),
+        Ok(expected.to_owned())
+    );
+    config.grouping.join_related = false;
+    assert_eq!(
+        structural(source, &config).map(|(fixed, _)| return fixed),
+        Ok(source.to_owned())
+    );
+}
+
+#[test]
+fn normalization_joins_declaration_families_across_visibility_and_layout() {
+    let source = concat!(
+        "use std::io;\n\npub use core::{\n    fmt,\n    mem,\n};\n",
+        "use external::First;\n\npub(crate) use external::{\n    Second,\n};\n",
+        "mod first;\n\npub mod second;\n\npub(crate) mod third;\n\npub(super) mod fourth;\n",
+        "type First = u8;\n\npub type Second = u16;\n",
+        "const FIRST: u8 = 1;\n\npub static SECOND: u8 = 2;\n",
+    );
+    let expected = concat!(
+        "use std::io;\npub use core::{\n    fmt,\n    mem,\n};\n",
+        "use external::First;\npub(crate) use external::{\n    Second,\n};\n\n",
+        "mod first;\npub mod second;\npub(crate) mod third;\npub(super) mod fourth;\n\n",
+        "type First = u8;\npub type Second = u16;\n\n",
+        "const FIRST: u8 = 1;\npub static SECOND: u8 = 2;\n",
+    );
+    let mut config = Config::default();
+    config.grouping.join_related = true;
+    assert_eq!(
+        structural(source, &config).map(|(fixed, _)| return fixed),
+        Ok(expected.to_owned())
+    );
+    assert_eq!(
+        structural(expected, &config).map(|(fixed, _)| return fixed),
+        Ok(expected.to_owned())
+    );
+}
+
+#[test]
+fn declaration_normalization_preserves_attached_attributes_and_comment_sections() {
+    let source = concat!(
+        "use std::io;\n",
+        "// External declarations.\n#[allow(\n    unused_imports,\n\n    dead_code\n)]\n",
+        "use external::Thing;\n",
+        "/// Module documentation.\n#[path = \"other.rs\"]\nmod other;\n",
+        "/// Alias documentation.\n#[allow(dead_code)]\ntype Value = u8;\n",
+        "\n// Another alias section.\n\ntype Other = u16;\n",
+    );
+    let expected = concat!(
+        "use std::io;\n",
+        "// External declarations.\n#[allow(\n    unused_imports,\n\n    dead_code\n)]\n",
+        "use external::Thing;\n\n",
+        "/// Module documentation.\n#[path = \"other.rs\"]\nmod other;\n\n",
+        "/// Alias documentation.\n#[allow(dead_code)]\ntype Value = u8;\n",
+        "\n// Another alias section.\n\ntype Other = u16;\n",
+    );
+    let mut config = Config::default();
+    config.grouping.join_related = true;
+    assert_eq!(
+        structural(source, &config).map(|(fixed, _)| return fixed),
+        Ok(expected.to_owned())
+    );
+}
+
+#[test]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "assertions define the test failure boundary and Result propagates setup errors"

@@ -30,17 +30,25 @@ fn updates(id: &str) -> Facts {
 
 // Compiler identities and effect scopes are supplied at the public planner seam;
 // real-source coverage of nested and deferred bodies belongs to compiler fixtures.
-fn rendered(config: &Config, setup: &[Facts], control: &Facts) -> Result<String, String> {
+fn rendered(
+    config: &Config,
+    setup: &[Facts],
+    control: &Facts,
+    blank_lines: usize,
+) -> Result<String, String> {
     let mut source = String::new();
     let mut units = Vec::new();
     let mut gaps = Vec::new();
     for (index, facts) in setup.iter().chain(once(control)).enumerate() {
         if index != 0 {
             let start = source.len();
+            for _ in 0..blank_lines {
+                source.push('\n');
+            }
             source.push_str("\n    ");
             gaps.push(Gap {
                 range: ByteRange::new(start, source.len()),
-                blank_lines: 0,
+                blank_lines,
                 vertical: true,
                 protected: false,
                 joinable: true,
@@ -53,7 +61,10 @@ fn rendered(config: &Config, setup: &[Facts], control: &Facts) -> Result<String,
         units.push(Unit {
             range,
             code_range: range,
-            shape: Default::default(),
+            shape: Shape {
+                form: if is_control { Form::Loop } else { Form::Call },
+                ..Default::default()
+            },
             kind: if is_control {
                 UnitKind::Control
             } else {
@@ -98,7 +109,12 @@ fn nested_updates_attach_without_first_body_reads() -> Result<(), Box<dyn Error>
     };
     for control in [assignment, mutable_call] {
         assert_eq!(
-            rendered(&Config::default(), &[initialized("outer:state")], &control)?,
+            rendered(
+                &Config::default(),
+                &[initialized("outer:state")],
+                &control,
+                0
+            )?,
             "setup;\n    control;"
         );
     }
@@ -140,7 +156,12 @@ fn late_reads_and_other_bindings_do_not_prove_accumulation() -> Result<(), Box<d
         ),
     ] {
         assert_eq!(
-            rendered(&Config::default(), &[initialized("outer:state")], &control)?,
+            rendered(
+                &Config::default(),
+                &[initialized("outer:state")],
+                &control,
+                0
+            )?,
             "setup;\n\n    control;",
             "{case}"
         );
@@ -154,7 +175,8 @@ fn late_reads_and_other_bindings_do_not_prove_accumulation() -> Result<(), Box<d
         rendered(
             &Config::default(),
             &[receiver_only_setup],
-            &updates("outer:state")
+            &updates("outer:state"),
+            0,
         )?,
         "setup;\n\n    control;"
     );
@@ -175,7 +197,7 @@ fn accumulator_respects_explicit_scope_and_zero_limit() -> Result<(), Box<dyn Er
     zero.grouping.max_before_control = 0;
     for config in [header, strict, zero] {
         assert_eq!(
-            rendered(&config, &[initialized("state")], &updates("state"))?,
+            rendered(&config, &[initialized("state")], &updates("state"), 0)?,
             "setup;\n\n    control;"
         );
     }
@@ -188,7 +210,7 @@ fn accumulator_respects_explicit_scope_and_zero_limit() -> Result<(), Box<dyn Er
         ..Facts::default()
     };
     assert_eq!(
-        rendered(&whole_body, &[initialized("state")], &read_only)?,
+        rendered(&whole_body, &[initialized("state")], &read_only, 0)?,
         "setup;\n    control;"
     );
     return Ok(());
@@ -225,7 +247,7 @@ fn accumulator_remains_subject_to_group_overflow() -> Result<(), Box<dyn Error>>
             "setup;\n\n    setup;\n    control;",
         ),
     ] {
-        assert_eq!(rendered(&config, &setup, &control)?, expected);
+        assert_eq!(rendered(&config, &setup, &control, 0)?, expected);
     }
     return Ok(());
 }
@@ -242,13 +264,76 @@ fn unknown_facts_remain_conservative_but_do_not_override_zero_limit() -> Result<
         (initialized("state"), Facts::default()),
     ] {
         assert_eq!(
-            rendered(&Config::default(), from_ref(&setup), &control)?,
+            rendered(&Config::default(), from_ref(&setup), &control, 0)?,
             "setup;\n    control;"
         );
         let mut zero = Config::default();
         zero.grouping.max_before_control = 0;
         assert_eq!(
-            rendered(&zero, &[setup], &control)?,
+            rendered(&zero, &[setup], &control, 0)?,
+            "setup;\n\n    control;"
+        );
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn opaque_body_preserves_proven_population_without_inventing_relationships()
+-> Result<(), Box<dyn Error>> {
+    let mut config = Config::default();
+    config.grouping.join_related = true;
+    assert_eq!(
+        rendered(&config, &[initialized("state")], &updates("state"), 1)?,
+        "setup;\n    control;"
+    );
+    let population = Facts {
+        known: false,
+        mutating_receivers: places(&["state"]),
+        ..Facts::default()
+    };
+    assert_eq!(
+        rendered(&config, &[initialized("state")], &population, 1)?,
+        "setup;\n    control;"
+    );
+    assert_eq!(
+        rendered(
+            &config,
+            &[initialized("unrelated"), initialized("state")],
+            &population,
+            0,
+        )?,
+        "setup;\n\n    setup;\n    control;"
+    );
+    for control in [
+        Facts::default(),
+        Facts {
+            known: false,
+            reads: places(&["state"]),
+            first_body_reads: places(&["state"]),
+            receivers: places(&["state"]),
+            mutating_receivers: places(&["other"]),
+            ..Facts::default()
+        },
+    ] {
+        assert_eq!(
+            rendered(&config, &[initialized("state")], &control, 1)?,
+            "setup;\n\n    control;"
+        );
+    }
+    for (use_in, limit, join_related) in [
+        (UseIn::Header, 1, true),
+        (UseIn::HeaderOrFirstBodyStatement, 0, true),
+        (UseIn::HeaderOrFirstBodyStatement, 1, false),
+    ] {
+        config.grouping.use_in = use_in;
+        config.grouping.max_before_control = limit;
+        config.grouping.join_related = join_related;
+        assert_eq!(
+            rendered(&config, &[initialized("state")], &population, 1)?,
             "setup;\n\n    control;"
         );
     }

@@ -208,7 +208,10 @@ fn contextual_if_spacing_applies_in_loops_and_after_else() -> Result<(), Box<dyn
         source.replace("        consume(value);", "\n        consume(value);")
     );
     let returning = "fn f() {\n    if ready {\n        prepare();\n    } else {\n        recover();\n    }\n    return Ok(());\n}\n";
-    assert_eq!(structural(returning, &visual_config())?.0, returning);
+    assert_eq!(
+        structural(returning, &visual_config())?.0,
+        returning.replace("    return Ok", "\n    return Ok")
+    );
     let continuing = returning.replace("return Ok(());", "finish();");
     assert_eq!(
         structural(&continuing, &visual_config())?.0,
@@ -334,11 +337,14 @@ fn visual_tails_distinguish_compact_values_from_completion_calls() -> Result<(),
     clippy::panic_in_result_fn,
     reason = "assertions define the test failure boundary and Result propagates setup errors"
 )]
-fn multiline_bindings_pair_only_matching_terminal_error_adapters() -> Result<(), Box<dyn Error>> {
+fn matching_terminal_error_adapters_do_not_connect_unrelated_bindings() -> Result<(), Box<dyn Error>>
+{
     let source = "fn f() {\n    let first = load(\n        left,\n    ).map_err(|error| Error::Read(error))?;\n    let second = load(\n        right,\n    ).map_err(Error::Read)?;\n    let third = load(\n        other,\n    ).map_err(Error::Write)?;\n}\n";
     assert_eq!(
         structural(source, &visual_config())?.0,
-        source.replace("    let third", "\n    let third")
+        source
+            .replace("    let second", "\n    let second")
+            .replace("    let third", "\n    let third")
     );
     return Ok(());
 }
@@ -391,5 +397,578 @@ fn multiline_destructuring_consumer_uses_positive_facts_when_effects_are_unknown
         apply_edits(source, &unrelated.edits())?,
         source.replace("    let result", "\n    let result")
     );
+    return Ok(());
+}
+
+fn normalized_pair(
+    source: &str,
+    config: &Config,
+    first: &str,
+    second: &str,
+    facts: &[Facts; 2],
+) -> Result<String, String> {
+    let mut parsed = parse_source(source, "2024")?;
+    let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
+    parsed.attach(source, &anchors);
+    for list in &mut parsed.model.lists {
+        for unit in &mut list.units {
+            let text = source.get(unit.code_range.as_range()).unwrap_or("");
+            if text == first {
+                unit.facts = facts[0].clone();
+            } else if text == second {
+                unit.facts = facts[1].clone();
+            }
+        }
+    }
+    let result = plan(config, source, &parsed.model)?;
+    return apply_edits(source, &result.edits());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn selection_construction_and_conditional_configuration_remain_distinct()
+-> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let selection = "let mut command = if available {\n        owned_command()\n    } else {\n        default_command()\n    };";
+    let construction = "let mut process = spawn(\n        command.arg(input),\n    )?;";
+    let configuration =
+        "if let Some(output) = process.output.as_mut() {\n        output.log = Some(log);\n    }";
+    let command = Place::local("command");
+    let process = Place::local("process");
+    let selection_facts = Facts {
+        known: true,
+        definitions: [command.clone()].into(),
+        ..Facts::default()
+    };
+    let construction_facts = Facts {
+        known: true,
+        definitions: [process.clone()].into(),
+        reads: [command.clone()].into(),
+        mutating_receivers: [command].into(),
+        ..Facts::default()
+    };
+    let configuration_facts = Facts {
+        known: true,
+        reads: [process.clone()].into(),
+        header_reads: [process.clone()].into(),
+        mutating_receivers: [process].into(),
+        ..Facts::default()
+    };
+    for (first, second, facts, ending) in [
+        (
+            selection,
+            construction,
+            [selection_facts, construction_facts.clone()],
+            "",
+        ),
+        (
+            construction,
+            configuration,
+            [construction_facts, configuration_facts],
+            "\n\n    return Ok(process);",
+        ),
+    ] {
+        let expected = format!("fn f() {{\n    {first}\n\n    {second}{ending}\n}}\n");
+        let compact = expected.replace("\n\n", "\n");
+        for source in [&compact, &expected] {
+            assert_eq!(
+                normalized_pair(source, &config, first, second, &facts)?,
+                expected
+            );
+        }
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn normalization_is_independent_of_optional_separators() -> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let producer = Facts {
+        known: true,
+        definitions: [Place::local("value")].into(),
+        ..Facts::default()
+    };
+    let consumer = Facts {
+        known: true,
+        reads: [Place::local("value")].into(),
+        ..Facts::default()
+    };
+    let parallel = Facts {
+        known: true,
+        reads: [Place::local("input")].into(),
+        ..Facts::default()
+    };
+    let mutation = Facts {
+        known: true,
+        mutating_receivers: [Place::local("value")].into(),
+        ..consumer.clone()
+    };
+    let validation = Facts {
+        header_reads: [Place::local("value")].into(),
+        ..consumer.clone()
+    };
+    let check = Facts {
+        check_of: Some(Place::local("value")),
+        ..validation.clone()
+    };
+    let destructuring = Facts {
+        definitions: [Place::local("value"), Place::local("other")].into(),
+        ..producer.clone()
+    };
+    for (first, second, facts) in [
+        (
+            "let left = 1;",
+            "let right = 2;",
+            [Facts::default(), Facts::default()],
+        ),
+        (
+            "let value = load();",
+            "let next = consume(value);",
+            [producer.clone(), consumer.clone()],
+        ),
+        (
+            "let (value, other) = split(\n        input,\n    );",
+            "let next = consume(value);",
+            [destructuring, consumer.clone()],
+        ),
+        (
+            "let value = Record {\n        field: input,\n    };",
+            "let next = consume(value);",
+            [producer.clone(), consumer.clone()],
+        ),
+        (
+            "let value = || {\n        compute()\n    };",
+            "consume(value);",
+            [producer.clone(), consumer.clone()],
+        ),
+        (
+            "let Some(value) = load() else {\n        return;\n    };",
+            "consume(value);",
+            [producer.clone(), consumer.clone()],
+        ),
+        (
+            "let left = load(\n        input,\n    ).map_err(Error::Read)?;",
+            "let right = read(\n        input,\n    ).map_err(Error::Read)?;",
+            [parallel.clone(), parallel],
+        ),
+        (
+            "let value = probe(\n        input,\n    );",
+            "if value.is_err() {\n        return;\n    }",
+            [producer.clone(), check],
+        ),
+        (
+            "let value = load();",
+            "if invalid(value) {\n        return;\n    }",
+            [producer.clone(), validation],
+        ),
+        (
+            "let mut value = create();",
+            "value.push(input);",
+            [producer, mutation.clone()],
+        ),
+        ("value.push(input);", "value.flush();", [mutation, consumer]),
+    ] {
+        let compact = format!("fn f() {{\n    {first}\n    {second}\n}}\n");
+        let spaced = format!("fn f() {{\n    {first}\n\n    {second}\n}}\n");
+        for source in [&compact, &spaced] {
+            let fixed = normalized_pair(source, &config, first, second, &facts)?;
+            assert_eq!(fixed, compact, "{first}");
+            assert_eq!(
+                normalized_pair(&fixed, &config, first, second, &facts)?,
+                fixed
+            );
+        }
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn normalization_respects_conditional_boundaries_and_comments() -> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    config.control_flow.related_continuation = true;
+    let conditional = "if ready {\n        prepare();\n    } else {\n        recover();\n    }";
+    for (next, separator) in [
+        ("consume();", "\n"),
+        ("Ok(value)", "\n"),
+        ("return Ok(value);", "\n"),
+    ] {
+        let compact = format!("fn f() {{\n    {conditional}\n    {next}\n}}\n");
+        let spaced = format!("fn f() {{\n    {conditional}\n\n    {next}\n}}\n");
+        let expected = format!("fn f() {{\n    {conditional}\n{separator}    {next}\n}}\n");
+        for source in [compact, spaced] {
+            assert_eq!(structural(&source, &config)?.0, expected);
+        }
+    }
+    let loop_body = "fn f() {\n    loop {\n        if ready {\n            prepare();\n        }\n        consume();\n    }\n}\n";
+    assert_eq!(
+        structural(loop_body, &config)?.0,
+        loop_body.replace("        consume();", "\n        consume();")
+    );
+    let protected =
+        "fn f() {\n    let left = 1;\n\n    // A separate section.\n    let right = 2;\n}\n";
+    assert_eq!(structural(protected, &config)?.0, protected);
+    config.grouping.bindings = Bindings::Preserve;
+    let preserved = "fn f() {\n    let left = 1;\n\n    let right = 2;\n}\n";
+    assert_eq!(structural(preserved, &config)?.0, preserved);
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn normalization_does_not_join_unknown_or_suppressed_relationships() -> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let first = "let left = load(\n        left_input,\n    ).map_err(Error::Read)?;";
+    let second = "let right = load(\n        right_input,\n    ).map_err(Error::Read)?;";
+    let compact = format!("fn f() {{\n    {first}\n    {second}\n}}\n");
+    let spaced = format!("fn f() {{\n    {first}\n\n    {second}\n}}\n");
+    let unrelated = [
+        Facts {
+            known: true,
+            reads: [Place::local("left")].into(),
+            ..Facts::default()
+        },
+        Facts {
+            known: true,
+            reads: [Place::local("right")].into(),
+            ..Facts::default()
+        },
+    ];
+    for source in [&compact, &spaced] {
+        assert_eq!(
+            normalized_pair(source, &config, first, second, &unrelated)?,
+            spaced
+        );
+    }
+    let unknown = "fn f() {\n    opaque();\n\n    other();\n}\n";
+    assert_eq!(structural(unknown, &config)?.0, unknown);
+    let first = "let value = probe();";
+    let second = "if value.is_err() {\n        return;\n    }";
+    let checked = format!("fn f() {{\n    {first}\n\n    {second}\n}}\n");
+    let facts = [
+        Facts {
+            known: true,
+            definitions: [Place::local("value")].into(),
+            ..Facts::default()
+        },
+        Facts {
+            known: true,
+            reads: [Place::local("value")].into(),
+            header_reads: [Place::local("value")].into(),
+            check_of: Some(Place::local("value")),
+            ..Facts::default()
+        },
+    ];
+    config.disable.push(Rule::ResultCheck);
+    assert_eq!(
+        normalized_pair(&checked, &config, first, second, &facts)?,
+        checked
+    );
+    let conditional = "if ready {\n        value = compute();\n    }";
+    let consumer = "consume(value);";
+    let compact = format!("fn f() {{\n    {conditional}\n    {consumer}\n}}\n");
+    let facts = [
+        Facts {
+            known: true,
+            writes: [Place::local("value")].into(),
+            ..Facts::default()
+        },
+        Facts {
+            known: true,
+            reads: [Place::local("value")].into(),
+            ..Facts::default()
+        },
+    ];
+    config.control_flow.related_continuation = true;
+    assert_eq!(
+        normalized_pair(&compact, &config, conditional, consumer, &facts)?,
+        compact.replace("    consume(value);", "\n    consume(value);")
+    );
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn normalization_keeps_aggregate_validation_and_incidental_receivers_separate()
+-> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    for (first, second, facts) in [
+        (
+            "let value = Record {\n        first: input,\n        second: other,\n    };",
+            "validate(value)?;",
+            [
+                Facts {
+                    known: true,
+                    definitions: [Place::local("value")].into(),
+                    ..Facts::default()
+                },
+                Facts {
+                    known: true,
+                    reads: [Place::local("value")].into(),
+                    ..Facts::default()
+                },
+            ],
+        ),
+        (
+            "write_secure(\n        staging.join(\"first\"),\n        input,\n    )?;",
+            "materialize_profile(staging.join(\"second\"))?;",
+            [
+                Facts {
+                    known: true,
+                    receivers: [Place::local("staging")].into(),
+                    reads: [Place::local("staging")].into(),
+                    ..Facts::default()
+                },
+                Facts {
+                    known: true,
+                    receivers: [Place::local("staging")].into(),
+                    reads: [Place::local("staging")].into(),
+                    ..Facts::default()
+                },
+            ],
+        ),
+    ] {
+        let compact = format!("fn f() {{\n    {first}\n    {second}\n}}\n");
+        let spaced = format!("fn f() {{\n    {first}\n\n    {second}\n}}\n");
+        for source in [&compact, &spaced] {
+            assert_eq!(
+                normalized_pair(source, &config, first, second, &facts)?,
+                spaced
+            );
+        }
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn parallel_error_callbacks_can_share_captures_without_executing_them() -> Result<(), Box<dyn Error>>
+{
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let first = "let width = cols.checked_add(\n        padding,\n    ).ok_or_else(|| Error::Size { cols, rows, attempts })?;";
+    let second = "let height = rows.checked_add(\n        margin,\n    ).ok_or_else(|| Error::Size { cols, rows, attempts })?;";
+    let compact = format!("fn f() {{\n    {first}\n    {second}\n}}\n");
+    let spaced = format!("fn f() {{\n    {first}\n\n    {second}\n}}\n");
+    let facts = [
+        Facts {
+            known: true,
+            reads: [Place::local("cols")].into(),
+            captures: [
+                Place::local("cols"),
+                Place::local("rows"),
+                Place::local("attempts"),
+            ]
+            .into(),
+            ..Facts::default()
+        },
+        Facts {
+            known: true,
+            reads: [Place::local("rows")].into(),
+            captures: [
+                Place::local("cols"),
+                Place::local("rows"),
+                Place::local("attempts"),
+            ]
+            .into(),
+            ..Facts::default()
+        },
+    ];
+    for source in [&compact, &spaced] {
+        assert_eq!(
+            normalized_pair(source, &config, first, second, &facts)?,
+            compact
+        );
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn test_preparation_ends_before_assertions_not_before_extraction() -> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let producer = "let input = events.iter().find_map(|event| {\n        event.payload()\n    });";
+    let extraction = "let (operation, bytes) = input.expect(\"input\");";
+    let source = format!(
+        "#[test]\nfn checks() {{\n    {producer}\n\n    {extraction}\n    assert_eq!(bytes, expected);\n\n    assert!(operation.is_some());\n    assert!(events.is_complete());\n}}\n"
+    );
+    let expected = format!(
+        "#[test]\nfn checks() {{\n    {producer}\n    {extraction}\n\n    assert_eq!(bytes, expected);\n    assert!(operation.is_some());\n    assert!(events.is_complete());\n}}\n"
+    );
+    let facts = [
+        Facts {
+            definitions: [Place::local("input")].into(),
+            ..Facts::default()
+        },
+        Facts {
+            known: true,
+            reads: [Place::local("input")].into(),
+            ..Facts::default()
+        },
+    ];
+    for input in [&source, &expected] {
+        let fixed = normalized_pair(input, &config, producer, extraction, &facts)?;
+        assert_eq!(fixed, expected);
+        assert_eq!(
+            token_fingerprint(input, "2024")?,
+            token_fingerprint(&fixed, "2024")?
+        );
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn test_action_checks_stay_attached_between_assertion_phases() -> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let action = "let response = driver.request(Detach).expect(\"response\");";
+    let check = "assert!(matches!(response.result, Success));";
+    let source = format!(
+        "#[test]\nfn checks() {{\n    assert_eq!(pids[0], pids[1]);\n    assert_ne!(pids[0], 0);\n    {action}\n\n    {check}\n    driver.close().expect(\"close\");\n}}\n"
+    );
+    let expected = format!(
+        "#[test]\nfn checks() {{\n    assert_eq!(pids[0], pids[1]);\n    assert_ne!(pids[0], 0);\n\n    {action}\n    {check}\n\n    driver.close().expect(\"close\");\n}}\n"
+    );
+    let facts = [
+        Facts {
+            known: true,
+            definitions: [Place::local("response")].into(),
+            ..Facts::default()
+        },
+        Facts {
+            reads: [Place::local("response")].into(),
+            ..Facts::default()
+        },
+    ];
+    for input in [&source, &expected] {
+        assert_eq!(
+            normalized_pair(input, &config, action, check, &facts)?,
+            expected
+        );
+    }
+    let loop_source = format!(
+        "#[test]\nfn checks() {{\n    prepare();\n    prepare();\n    prepare();\n    prepare();\n    for item in items {{\n        {action}\n\n        {check}\n    }}\n}}\n"
+    );
+    let fixed = normalized_pair(&loop_source, &config, action, check, &facts)?;
+    assert!(fixed.contains(&format!("{action}\n        {check}")));
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn assertion_phases_respect_test_scope_threshold_and_macro_shape() -> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let tiny = "#[test]\nfn checks() {\n    let value = 1;\n    assert_eq!(value, 1);\n    assert!(true);\n    assert_ne!(value, 0);\n}\n";
+    assert_eq!(structural(tiny, &config)?.0, tiny);
+    config.exits.short_block_max_statements = 3;
+    let spaced = tiny.replace("    assert_eq!", "\n    assert_eq!");
+    assert_eq!(structural(tiny, &config)?.0, spaced);
+    assert_eq!(structural(&spaced, &config)?.0, spaced);
+    let ordinary = tiny.replace("#[test]\n", "");
+    assert_eq!(structural(&ordinary, &config)?.0, ordinary);
+    let methods = "#[test]\nfn checks() {\n    let value = 1;\n    checker.assert(value);\n    checker.assert_eq(value);\n    checker.assert_ne(value);\n}\n";
+    let ordinary_methods = methods.replace("#[test]\n", "");
+    assert_eq!(
+        structural(methods, &config)?.0,
+        format!("#[test]\n{}", structural(&ordinary_methods, &config)?.0)
+    );
+    let disabled = Config {
+        disable: vec![Rule::Bindings, Rule::Expressions],
+        ..config.clone()
+    };
+    assert_eq!(structural(tiny, &disabled)?.0, tiny);
+    let protected = tiny.replace("#[test]", "#[test]\n#[rustfmt::skip]");
+    assert_eq!(structural(&protected, &config)?.0, protected);
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn standalone_assertion_operations_end_before_cleanup() -> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let source = "#[test]\nfn checks() {\n    assert!(ready);\n    assert!(attached);\n    assert!(alive);\n    assert!(Command::new(\"kill\").arg(pid).status().expect(\"kill\").success());\n    let _ = driver.close();\n}\n";
+    let expected = source.replace("    let _", "\n    let _");
+    assert_eq!(structural(source, &config)?.0, expected);
+    assert_eq!(structural(&expected, &config)?.0, expected);
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn action_assertion_and_shared_input_verification_form_one_step() -> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let action = "let response = driver.request(destination).expect(\"response\");";
+    let check = "assert!(matches!(response.result, Success));";
+    let verification = "validate(&session, &destination).expect(\"valid\");";
+    let source = format!(
+        "#[test]\nfn checks() {{\n    assert!(ready);\n    assert!(attached);\n\n    {action}\n    {check}\n    {verification}\n}}\n"
+    );
+    for input in [
+        &source,
+        &source.replace(verification, &format!("\n    {verification}")),
+    ] {
+        let mut parsed = parse_source(input, "2024")?;
+        let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
+        parsed.attach(input, &anchors);
+        for list in &mut parsed.model.lists {
+            for unit in &mut list.units {
+                let text = input.get(unit.code_range.as_range()).unwrap_or("");
+                if text == action {
+                    unit.facts.definitions.insert(Place::local("response"));
+                    unit.facts.reads.insert(Place::local("destination"));
+                } else if text == check {
+                    unit.facts.reads.insert(Place::local("response"));
+                } else if text == verification {
+                    unit.facts.reads.insert(Place::local("destination"));
+                }
+            }
+        }
+        let result = plan(&config, input, &parsed.model)?;
+        assert_eq!(apply_edits(input, &result.edits())?, source);
+    }
     return Ok(());
 }
