@@ -5,7 +5,7 @@ use super::guard_pair;
 use super::visual;
 use crate::config::{Bindings, Config, Expressions, GuardChain, ImmediateCheck, Separation, Tail};
 use crate::model::{Form, ItemKind, Rule, RuleMask, UnitKind, UnitList};
-use crate::relations::{Relationship, direct_producer, intersects, relationship};
+use crate::relations::{Relationship, direct_producer, intersects, outputs, relationship};
 
 pub(super) fn apply(
     config: &Config,
@@ -154,9 +154,18 @@ pub(super) fn apply(
             && config.exits.tail == Tail::Smart;
         let data_continuation = compact_policy
             && config.control_flow.related_continuation
-            && (b.kind.ordinary() || b.kind == UnitKind::Control || b.kind == UnitKind::Exit)
+            && (b.kind.ordinary()
+                || b.kind == UnitKind::Control
+                || b.kind == UnitKind::Exit
+                || b.shape.form == Form::Macro)
             && (direct_producer(&a.facts, &b.facts, &config.grouping)
-                || (b.facts.known
+                || (b.shape.form == Form::Macro
+                    && intersects(
+                        &outputs(&a.facts),
+                        &b.facts.reads,
+                        config.grouping.self_fields,
+                    ))
+                || ((b.facts.known || b.shape.form == Form::Macro)
                     && config.grouping.shared_inputs
                     && intersects(
                         &a.facts.header_reads,
