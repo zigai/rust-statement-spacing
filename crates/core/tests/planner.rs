@@ -1209,6 +1209,41 @@ fn block_data_continuations_respect_identity_and_opt_outs() -> Result<(), Box<dy
     clippy::panic_in_result_fn,
     reason = "assertions define the test failure boundary"
 )]
+fn block_macro_data_continuations_respect_shared_inputs_and_outputs() -> Result<(), Box<dyn Error>>
+{
+    for header in [false, true] {
+        for related in [false, true] {
+            for enabled in [false, true] {
+                let mut block = facts(&[], &[]);
+                if header {
+                    block.header_reads = places(&["state"]);
+                } else {
+                    block.writes = places(&["state"]);
+                }
+                let mut next = facts(&[], &[if related { "state" } else { "other" }]);
+                next.known = false;
+                let (source, mut initial) =
+                    model(&[UnitKind::Control, UnitKind::Opaque], &[block, next], &[0]);
+                initial.lists[0].units[1].shape.form = Form::Macro;
+                let mut config = Config::only(&[Rule::AfterBlock]);
+                config.control_flow.related_continuation = enabled;
+                assert_eq!(
+                    count(&config, &source, &initial)?,
+                    usize::from(!(related && enabled))
+                );
+                config.grouping.expressions = Expressions::Strict;
+                assert_eq!(count(&config, &source, &initial)?, 1);
+            }
+        }
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
 fn guard_and_final_return_share_a_phase() -> Result<(), Box<dyn Error>> {
     let (source, mut initial) = model(
         &[UnitKind::Let, UnitKind::Control, UnitKind::Exit],

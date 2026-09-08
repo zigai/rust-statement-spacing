@@ -333,3 +333,63 @@ fn unsafe_operations_and_guard_checks_can_precede_bindings() -> Result<(), Box<d
     );
     return Ok(());
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn macro_following_block_with_shared_input_remains_compact() -> Result<(), Box<dyn Error>> {
+    let source = "fn f(values: &[u32]) {\n    for value in values {\n        consume(value);\n    }\n    process!(values);\n}\n";
+    let mut parsed = parse_source(source, "2024")?;
+    let mut semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
+    let loop_values = source
+        .find("in values")
+        .map(|p| return p + 3)
+        .ok_or("token")?;
+    let macro_values = source
+        .find("process!(values)")
+        .map(|p| return p + 9)
+        .ok_or("token")?;
+    let values_place = Place::local("values-id");
+    semantics.events.push(Event {
+        range: ByteRange::new(loop_values, loop_values + 6),
+        kind: EventKind::Read,
+        place: Some(values_place.clone()),
+    });
+    semantics.events.push(Event {
+        range: ByteRange::new(macro_values, macro_values + 6),
+        kind: EventKind::Read,
+        place: Some(values_place.clone()),
+    });
+    parsed.attach(source, &semantics);
+    let plan_shared = plan(&Config::default(), source, &parsed.model)?;
+    assert!(plan_shared.findings.is_empty());
+
+    let unrelated = "fn f(values: &[u32], other: &[u32]) {\n    for value in values {\n        consume(value);\n    }\n    process!(other);\n}\n";
+    let mut parsed_unrelated = parse_source(unrelated, "2024")?;
+    let mut semantics_unrelated = SemanticIndex::structural_anchors(parsed_unrelated.code_ranges());
+    let loop_val = unrelated
+        .find("in values")
+        .map(|p| return p + 3)
+        .ok_or("token")?;
+    let macro_oth = unrelated
+        .find("process!(other)")
+        .map(|p| return p + 9)
+        .ok_or("token")?;
+    semantics_unrelated.events.push(Event {
+        range: ByteRange::new(loop_val, loop_val + 6),
+        kind: EventKind::Read,
+        place: Some(values_place),
+    });
+    semantics_unrelated.events.push(Event {
+        range: ByteRange::new(macro_oth, macro_oth + 5),
+        kind: EventKind::Read,
+        place: Some(Place::local("other-id")),
+    });
+    parsed_unrelated.attach(unrelated, &semantics_unrelated);
+    let plan_unrelated = plan(&Config::default(), unrelated, &parsed_unrelated.model)?;
+    assert_eq!(plan_unrelated.findings.len(), 1);
+    assert_eq!(plan_unrelated.findings[0].rule, Rule::AfterBlock);
+    return Ok(());
+}
