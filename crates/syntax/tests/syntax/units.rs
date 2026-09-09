@@ -1,8 +1,6 @@
-use std::error::Error;
-
-use rust_statement_spacing_core::config::{GuardChain, Tail};
-
 use super::*;
+use rust_statement_spacing_core::config::{GuardChain, Tail};
+use std::error::Error;
 
 #[test]
 #[expect(
@@ -15,6 +13,7 @@ fn nested_functions_are_not_outer_statement_groups() -> Result<(), Box<dyn Error
     let (fixed, _) = structural(source, &strict())?;
     assert!(fixed.contains("one();\n\n        two();"));
     assert!(fixed.contains("}\n\n    inner();"));
+
     return Ok(());
 }
 
@@ -55,7 +54,9 @@ fn if_else_and_let_else_are_single_source_units() -> Result<(), Box<dyn Error>> 
         outer.gaps[0].range,
         ByteRange::new(outer.units[0].range.end, outer.units[1].range.start)
     );
+
     structural(source, &strict())?;
+
     return Ok(());
 }
 
@@ -68,6 +69,7 @@ fn let_match_is_a_binding_not_an_after_block_unit() -> Result<(), Box<dyn Error>
     let source = "fn f(x: Option<u8>) {\n    let y = match x {\n        Some(y) => y,\n        None => 0,\n    };\n    use_y(y);\n}\n";
     let config = Config::only(&[Rule::AfterBlock]);
     assert_eq!(structural(source, &config)?.0, source);
+
     return Ok(());
 }
 
@@ -80,6 +82,7 @@ fn match_arm_boundary_is_not_a_statement_boundary() -> Result<(), Box<dyn Error>
     let source =
         "fn f(x: u8) {\n    match x {\n        0 => one(),\n        _ => two(),\n    }\n}\n";
     assert_eq!(structural(source, &strict())?.0, source);
+
     return Ok(());
 }
 
@@ -93,6 +96,7 @@ fn out_of_line_modules_remain_compact() -> Result<(), Box<dyn Error>> {
     let (fixed, result) = structural(source, &Config::default())?;
     assert_eq!(fixed, source);
     assert!(result.findings.is_empty());
+
     return Ok(());
 }
 
@@ -107,12 +111,15 @@ fn compact_declarations_separate_families_not_individual_items() -> Result<(), B
     let mut config = Config::default();
     assert_eq!(structural(source, &config)?.0, expected);
     assert!(structural(expected, &config)?.1.findings.is_empty());
+
     config.disable.push(Rule::ItemSpacing);
     assert_eq!(structural(source, &config)?.0, source);
+
     config.disable.clear();
     config.items.compact_declarations = false;
     let separated = "use std::io;\n\nuse std::fs;\n\nconst FIRST: u8 = 1;\n\nstatic SECOND: u8 = 2;\n\ntype Value = u8;\n\ntype Other = u16;\n";
     assert_eq!(structural(source, &config)?.0, separated);
+
     return Ok(());
 }
 
@@ -130,6 +137,7 @@ fn import_origins_do_not_split_a_contiguous_group() {
         structural(expected, &config).map(|(fixed, _)| return fixed),
         Ok(expected.to_owned())
     );
+
     config.grouping.join_related = false;
     assert_eq!(
         structural(source, &config).map(|(fixed, _)| return fixed),
@@ -202,6 +210,7 @@ fn inline_modules_keep_major_item_boundaries() -> Result<(), Box<dyn Error>> {
         structural(source, &Config::default())?.0,
         "mod before;\n\npub(super) mod inline {}\n\nmod after;\n"
     );
+
     return Ok(());
 }
 
@@ -218,6 +227,7 @@ fn out_of_line_modules_respect_disabled_compact_declarations() -> Result<(), Box
         structural(source, &config)?.0,
         "mod first;\n\npub(super) mod second;\n"
     );
+
     return Ok(());
 }
 
@@ -238,6 +248,7 @@ fn final_controls_keep_after_block_boundaries() -> Result<(), Box<dyn Error>> {
     let drains =
         "fn drain() {\n    for _ in first.drain(..) {}\n    for _ in second.drain(..) {}\n}\n";
     assert_eq!(structural(drains, &Config::default())?.0, drains);
+
     return Ok(());
 }
 
@@ -254,8 +265,10 @@ fn value_returning_controls_remain_tail_values() -> Result<(), Box<dyn Error>> {
         structural(source, &config)?.0,
         source.replace("setup();\n    ", "setup();\n\n    ")
     );
+
     config.exits.tail = Tail::Preserve;
     assert_eq!(structural(source, &config)?.0, source);
+
     return Ok(());
 }
 
@@ -290,6 +303,7 @@ fn guards_accept_short_trailing_exits_and_try_operations() -> Result<(), Box<dyn
             .ok_or("missing if unit")?;
         assert_eq!(unit.is_guard, expected, "{body}");
     }
+
     let source = "fn f() { if condition { check()?; } else { return; } }";
     let parsed = parse_source(source, "2024")?;
     assert!(
@@ -300,6 +314,7 @@ fn guards_accept_short_trailing_exits_and_try_operations() -> Result<(), Box<dyn
             .flat_map(|list| return &list.units)
             .any(|unit| return unit.is_guard)
     );
+
     return Ok(());
 }
 
@@ -324,6 +339,7 @@ fn unsafe_operations_and_guard_checks_can_precede_bindings() -> Result<(), Box<d
         separate.control_flow.guard_chain = GuardChain::Separate;
         assert!(!structural(source, &separate)?.1.findings.is_empty());
     }
+
     let plain = "fn f() {\n    { configure(); }\n    let option = 0;\n}\n";
     assert!(
         !structural(plain, &Config::only(&[Rule::AfterBlock]))?
@@ -331,6 +347,7 @@ fn unsafe_operations_and_guard_checks_can_precede_bindings() -> Result<(), Box<d
             .findings
             .is_empty()
     );
+
     return Ok(());
 }
 
@@ -351,6 +368,7 @@ fn macro_following_block_with_shared_input_remains_compact() -> Result<(), Box<d
         .find("process!(values)")
         .map(|p| return p + 9)
         .ok_or("token")?;
+
     let values_place = Place::local("values-id");
     semantics.events.push(Event {
         range: ByteRange::new(loop_values, loop_values + 6),
@@ -377,6 +395,7 @@ fn macro_following_block_with_shared_input_remains_compact() -> Result<(), Box<d
         .find("process!(other)")
         .map(|p| return p + 9)
         .ok_or("token")?;
+
     semantics_unrelated.events.push(Event {
         range: ByteRange::new(loop_val, loop_val + 6),
         kind: EventKind::Read,
@@ -391,5 +410,6 @@ fn macro_following_block_with_shared_input_remains_compact() -> Result<(), Box<d
     let plan_unrelated = plan(&Config::default(), unrelated, &parsed_unrelated.model)?;
     assert_eq!(plan_unrelated.findings.len(), 1);
     assert_eq!(plan_unrelated.findings[0].rule, Rule::AfterBlock);
+
     return Ok(());
 }

@@ -12,17 +12,20 @@ pub(crate) fn protected(node: &SyntaxNode) -> bool {
                     .chars()
                     .filter(|c| return !c.is_whitespace())
                     .collect();
+
                 // A conditional skip is conservatively respected, rather than
                 // attempting to duplicate rustfmt's cfg evaluation.
                 if compact.contains("rustfmt::skip") {
                     return true;
                 }
+
                 let name = compact
                     .trim_start_matches("#![")
                     .trim_start_matches("#[")
                     .split(['(', '=', ']'])
                     .next()
                     .unwrap_or("");
+
                 // Unknown procedural attributes may rewrite original syntax. Do not
                 // assume a valid original-source mapping through such a transform.
                 return !matches!(

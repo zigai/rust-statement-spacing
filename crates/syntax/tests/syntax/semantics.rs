@@ -1,6 +1,5 @@
-use std::error::Error;
-
 use super::*;
+use std::error::Error;
 
 #[test]
 #[expect(
@@ -11,6 +10,7 @@ fn no_compiler_mapping_means_no_edits() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    one();\n    two();\n}\n";
     let parsed = parse_source(source, "2024")?;
     assert!(plan(&strict(), source, &parsed.model)?.findings.is_empty());
+
     return Ok(());
 }
 
@@ -52,6 +52,7 @@ fn deferred_body_use_does_not_attach_outer_control() {
             place: Some(immediate.clone()),
         }],
     };
+
     for kind in [
         EventKind::Read,
         EventKind::Write,
@@ -65,6 +66,7 @@ fn deferred_body_use_does_not_attach_outer_control() {
             place: Some(captured.clone()),
         });
     }
+
     let facts = index.facts(
         ByteRange::new(0, 30),
         None,
@@ -183,6 +185,7 @@ fn nested_deferral_captures_are_relative_to_the_enclosing_body() {
         &[ByteRange::new(30, 65)],
         true,
     );
+
     assert_eq!(outer_facts.captures, [outer.clone()].into());
     assert_eq!(middle_facts.captures, [outer, middle].into());
     assert!(outer_facts.reads.is_empty());
@@ -220,6 +223,7 @@ fn direct_callee_ignores_nested_and_deferred_operations() {
         false,
     );
     assert_eq!(facts.direct_callees, ["outer".into()].into());
+
     let deferred = index.facts(
         ByteRange::new(19, 28),
         None,
@@ -273,11 +277,13 @@ fn inactive_sibling_is_a_barrier_not_a_deleted_unit() -> Result<(), Box<dyn Erro
     let disabled_start = source
         .find("two();")
         .ok_or("expected token in source fixture")?;
+
     semantics
         .anchors
         .retain(|anchor| return anchor.range.start != disabled_start);
     parsed.attach(source, &semantics);
     assert!(plan(&strict(), source, &parsed.model)?.edits().is_empty());
+
     return Ok(());
 }
 
@@ -293,6 +299,7 @@ fn block_valued_condition_is_part_of_the_header() -> Result<(), Box<dyn Error>> 
     let start = source
         .find("ready")
         .ok_or("expected token in source fixture")?;
+
     let ready = Place::local("ready-id");
     semantics.events.push(Event {
         range: ByteRange::new(start, start + 5),
@@ -308,6 +315,7 @@ fn block_valued_condition_is_part_of_the_header() -> Result<(), Box<dyn Error>> 
         .find(|unit| return unit.kind == UnitKind::Control)
         .ok_or("expected control-flow unit in parsed fixture")?;
     assert!(control.facts.header_reads.contains(&ready));
+
     return Ok(());
 }
 
@@ -323,6 +331,7 @@ fn first_match_arm_operation_does_not_include_nested_body_reads() -> Result<(), 
     let start = source
         .find("value);")
         .ok_or("expected token in source fixture")?;
+
     let value = Place::local("value-id");
     semantics.events.push(Event {
         range: ByteRange::new(start, start + 5),
@@ -343,5 +352,6 @@ fn first_match_arm_operation_does_not_include_nested_body_reads() -> Result<(), 
         .ok_or("expected control-flow unit in parsed fixture")?;
     assert!(!control.facts.first_body_reads.contains(&value));
     assert!(control.facts.whole_body_reads.contains(&value));
+
     return Ok(());
 }

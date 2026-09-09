@@ -1,4 +1,13 @@
 #![cfg_attr(windows, allow(unsafe_code))]
+use crate::protocol::{LintResult, MAX_JSON_BYTES, collect_edits};
+use crate::workflow::Driver;
+use crate::workspace::{canonical, digest, relative_path};
+use crate::{Result, VERSION, failure};
+#[cfg(unix)]
+use rustix::io::Errno;
+#[cfg(unix)]
+use rustix::process::{Pid, Signal, kill_process_group};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error as StdError;
@@ -13,22 +22,12 @@ use std::result::Result as StdResult;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-
-#[cfg(unix)]
-use rustix::io::Errno;
-#[cfg(unix)]
-use rustix::process::{Pid, Signal, kill_process_group};
-use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
 use tokio::{signal, time};
 
-use crate::protocol::{LintResult, MAX_JSON_BYTES, collect_edits};
-use crate::workflow::Driver;
-use crate::workspace::{canonical, digest, relative_path};
-use crate::{Result, VERSION, failure};
 #[derive(Debug)]
 pub(crate) struct Interrupted;
 
@@ -55,14 +54,17 @@ fn new_executor() -> StdResult<Executor, String> {
         .enable_all()
         .build()
         .map_err(|error| return error.to_string())?;
+
     let signals = {
         let _entered = runtime.enter();
+
         runtime.spawn(async {
             while signal::ctrl_c().await.is_ok() {
                 INTERRUPTED.store(true, Ordering::Relaxed);
             }
         })
     };
+
     return Ok(Executor {
         runtime,
         _signals: signals,
@@ -111,6 +113,7 @@ fn tail(text: &str) -> &str {
         .rev()
         .nth(7999)
         .map_or(0, |(index, _)| return index);
+
     return text.get(start..).unwrap_or("");
 }
 
@@ -280,6 +283,7 @@ fn detect_toolchain(parent: &Path) -> Option<String> {
         {
             return Some(channel.to_owned());
         }
+
         let legacy_path = ancestor.join("rust-toolchain");
         if let Ok(contents) = fs::read_to_string(&legacy_path) {
             if let Ok(value) = toml::from_str::<toml::Value>(&contents)
@@ -290,6 +294,7 @@ fn detect_toolchain(parent: &Path) -> Option<String> {
             {
                 return Some(channel.to_owned());
             }
+
             if let Some(first_line) = contents.lines().next() {
                 let trimmed = first_line.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with('[') {
@@ -297,6 +302,7 @@ fn detect_toolchain(parent: &Path) -> Option<String> {
                 }
             }
         }
+
         if ancestor.join("Cargo.toml").is_file()
             && let Ok(contents) = fs::read_to_string(ancestor.join("Cargo.toml"))
             && let Ok(value) = toml::from_str::<toml::Value>(&contents)
@@ -305,6 +311,7 @@ fn detect_toolchain(parent: &Path) -> Option<String> {
             break;
         }
     }
+
     return None;
 }
 
@@ -315,6 +322,7 @@ fn normalize_toolchain(raw: &str) -> String {
             return raw.get(..index).unwrap_or(raw).to_owned();
         }
     }
+
     return raw.to_owned();
 }
 
@@ -328,9 +336,11 @@ impl Driver {
     ) -> Result<RunResult> {
         let executor = executor()?;
         check_interrupted()?;
+
         let (program, rest) = args
             .split_first()
             .ok_or_else(|| return failure("empty command"))?;
+
         let started = Instant::now();
         let result = executor.runtime.block_on(async {
             #[cfg(windows)]
@@ -358,9 +368,11 @@ impl Driver {
                 .kill_on_drop(true);
             #[cfg(unix)]
             command.process_group(0);
+
             if let Some(env) = env {
                 command.envs(env);
             }
+
             let mut child = command
                 .spawn()
                 .map_err(|error| return failure(format!("could not execute {program}: {error}")))?;
@@ -381,10 +393,12 @@ impl Driver {
                 .stdout
                 .take()
                 .ok_or_else(|| return failure("spawned command has no stdout pipe"))?;
+
             let mut stderr = child
                 .stderr
                 .take()
                 .ok_or_else(|| return failure("spawned command has no stderr pipe"))?;
+
             let mut out = Vec::new();
             let mut err = Vec::new();
             let status = {
@@ -394,6 +408,7 @@ impl Driver {
                         stdout.read_to_end(&mut out),
                         stderr.read_to_end(&mut err)
                     );
+
                     return Ok::<_, io::Error>((status?, out_result?, err_result?));
                 };
                 tokio::pin!(communication);
@@ -403,6 +418,7 @@ impl Driver {
                     result = &mut communication => Some(result),
                     () = time::sleep(Duration::from_secs(self.options.timeout)) => None,
                 };
+
                 if let Some(result) = outcome {
                     result
                         .map_err(|error| {
@@ -413,6 +429,7 @@ impl Driver {
                     #[cfg(unix)]
                     {
                         let signal_error = terminate_group(pid, Signal::TERM).err();
+
                         if time::timeout(Duration::from_secs(3), &mut communication)
                             .await
                             .is_err()
@@ -424,15 +441,18 @@ impl Driver {
                                     "could not reap terminated command: {error}"
                                 ));
                             })?;
+
                             if let Some(error) = kill_error {
                                 return Err(failure(format!(
                                     "could not terminate command: {error}"
                                 )));
                             }
                         }
+
                         if interrupted() {
                             return Err(Interrupted.into());
                         }
+
                         if let Some(error) = signal_error {
                             return Err(failure(format!("could not terminate command: {error}")));
                         }
@@ -458,6 +478,7 @@ impl Driver {
                     }
                 }
             };
+
             return Ok(RunResult {
                 stdout: decoded(&out),
                 stderr: decoded(&err),
@@ -478,6 +499,7 @@ impl Driver {
                 "seconds": (started.elapsed().as_secs_f64() * 1000.0).round() / 1000.0,
                 "stderr_tail": tail(&result.stderr),
             }));
+
         if require_success && result.code != 0 {
             return Err(failure(format!(
                 "{} failed:\n{}\n{}",
@@ -486,7 +508,9 @@ impl Driver {
                 tail(&result.stdout)
             )));
         }
+
         check_interrupted()?;
+
         return Ok(result);
     }
 
@@ -509,6 +533,7 @@ impl Driver {
             {
                 manifest = parent.join("Cargo.toml");
             }
+
             if !manifest.exists() {
                 return Err(failure(format!(
                     "Cargo manifest does not exist: {}",
@@ -516,10 +541,12 @@ impl Driver {
                 )));
             }
         }
+
         manifest = canonical(&manifest)?;
         let parent = manifest
             .parent()
             .ok_or_else(|| return failure("Cargo manifest has no parent directory"))?;
+
         if self.toolchain.as_ref().is_none_or(String::is_empty) {
             if let Some(detected) = detect_toolchain(parent) {
                 self.toolchain = Some(detected);
@@ -535,6 +562,7 @@ impl Driver {
                     .split_whitespace()
                     .next()
                     .map(normalize_toolchain);
+
                 if self.toolchain.is_none() {
                     return Err(failure(
                         "could not identify the project's canonical Rust toolchain",
@@ -542,6 +570,7 @@ impl Driver {
                 }
             }
         }
+
         let mut args = self.formatter_cargo();
         args.extend([
             "locate-project".into(),
@@ -557,14 +586,17 @@ impl Driver {
             .get("root")
             .and_then(Value::as_str)
             .ok_or_else(|| return failure("invalid cargo locate-project output"))?;
+
         let root = canonical(
             Path::new(root_manifest)
                 .parent()
                 .ok_or_else(|| return failure("invalid cargo locate-project output"))?,
         )?;
+
         if let Some(map) = self.report.as_object_mut() {
             map.insert("workspace".into(), json!(root));
         }
+
         return Ok(root);
     }
 
@@ -574,6 +606,7 @@ impl Driver {
         let cargo = self.run(args, root, None, true)?.stdout.trim().to_owned();
         let mut args = self.formatter_cargo();
         args.extend(["fmt".into(), "--version".into()]);
+
         let rustfmt = self.run(args, root, None, true)?.stdout.trim().to_owned();
         if cargo.is_empty() || rustfmt.is_empty() {
             return Err(failure("formatter identity could not be established"));
@@ -589,9 +622,11 @@ impl Driver {
             "--manifest-path".into(),
             root.join("Cargo.toml").to_string_lossy().into_owned(),
         ]);
+
         if !write {
             args.extend(["--".into(), "--check".into()]);
         }
+
         let result = self.run(args, root, None, false)?;
         if result.code != 0 {
             let message = if write {
@@ -599,6 +634,7 @@ impl Driver {
             } else {
                 "cargo fmt rejected the candidate"
             };
+
             return Err(failure(format!(
                 "{message}; nothing is silently reformatted:\n{}\n{}",
                 tail(&result.stdout),
@@ -620,6 +656,7 @@ impl Driver {
         let target = temporary.join(format!("{label}-target"));
         let mut random = [0_u8; 24];
         random_bytes(&mut random)?;
+
         let mut nonce = String::with_capacity(48);
         const HEX: &[u8; 16] = b"0123456789abcdef";
         for byte in random {
@@ -631,6 +668,7 @@ impl Driver {
                 nonce.push(char::from(lo));
             }
         }
+
         let mut env = BTreeMap::<String, String>::new();
         env.extend([
             (
@@ -648,12 +686,15 @@ impl Driver {
             ),
             ("CARGO_TERM_COLOR".into(), "never".into()),
         ]);
+
         if self.options.offline {
             env.insert("CARGO_NET_OFFLINE".into(), "true".into());
         }
+
         let mut args = vec![self.options.cargo.clone(), "dylint".into()];
         if let Some(library) = &self.options.library_path {
             let library = canonical(Path::new(library))?;
+
             if let Some(prebuilt) = prebuilt_library(&library) {
                 args.extend(["--lib-path".into(), prebuilt.to_string_lossy().into_owned()]);
             } else {
@@ -669,11 +710,13 @@ impl Driver {
             let env_path = env::var_os("STATEMENT_SPACING_LINT_PATH")
                 .or_else(|| return env::var_os("STATEMENT_SPACING_LIBRARY_PATH"))
                 .map(PathBuf::from);
+
             let local_lint = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .and_then(Path::parent)
                 .map(|p| return p.join("lint"))
                 .filter(|p| return p.join("Cargo.toml").is_file());
+
             if let Some(path) = env_path.or(local_lint) {
                 if let Some(prebuilt) = prebuilt_library(&path) {
                     args.extend(["--lib-path".into(), prebuilt.to_string_lossy().into_owned()]);
@@ -689,6 +732,7 @@ impl Driver {
                 ]);
             }
         }
+
         let binary_identity = args
             .iter()
             .position(|arg| return arg == "--lib-path")
@@ -697,6 +741,7 @@ impl Driver {
                 return Ok(json!({"path": path, "sha256": digest(&fs::read(path)?)}));
             })
             .transpose()?;
+
         if let Some(identity) = &binary_identity {
             if self
                 .report
@@ -707,8 +752,10 @@ impl Driver {
                     "Dylint library binary changed between verification runs",
                 ));
             }
+
             self.set_report("library_binary", identity.clone());
         }
+
         args.extend([
             "--workspace".into(),
             "--".into(),
@@ -718,30 +765,38 @@ impl Driver {
             "--manifest-path".into(),
             root.join("Cargo.toml").to_string_lossy().into_owned(),
         ]);
+
         if self.options.all_features {
             args.push("--all-features".into());
         }
+
         if self.options.no_default_features {
             args.push("--no-default-features".into());
         }
+
         if !self.options.features.is_empty() {
             args.extend(["--features".into(), self.options.features.join(",")]);
         }
+
         if let Some(target) = &self.options.target {
             args.extend(["--target".into(), target.clone()]);
         }
+
         let result = self.run(args, root, Some(&env), false)?;
+
         if let Some(identity) = binary_identity {
             let path = identity
                 .get("path")
                 .and_then(Value::as_str)
                 .ok_or_else(|| return failure("missing library binary path"))?;
+
             if identity.get("sha256").and_then(Value::as_str)
                 != Some(digest(&fs::read(path)?).as_str())
             {
                 return Err(failure("Dylint library binary changed during verification"));
             }
         }
+
         let (findings, edits, errors) = collect_edits(root, &result.stdout)?;
         if !errors.is_empty() {
             return Err(failure(format!(
@@ -749,6 +804,7 @@ impl Driver {
                 errors.into_iter().take(5).collect::<Vec<_>>().join("; ")
             )));
         }
+
         let mut paths = fs::read_dir(&probes)?
             .map(|entry| return entry.map(|entry| return entry.path()))
             .collect::<io::Result<Vec<_>>>()?;
@@ -758,12 +814,14 @@ impl Driver {
                 .is_some_and(|extension| return extension == "json");
         });
         paths.sort();
+
         let mut handshakes = Vec::new();
         for path in paths {
             let metadata = fs::symlink_metadata(&path)?;
             if !metadata.is_file() || metadata.len() > MAX_JSON_BYTES {
                 return Err(failure("invalid Dylint handshake file"));
             }
+
             let data: Value = serde_json::from_str(&fs::read_to_string(path)?)?;
             if data.get("schema").and_then(Value::as_i64) != Some(1)
                 || data.get("library").and_then(Value::as_str) != Some("statement_spacing")
@@ -774,6 +832,7 @@ impl Driver {
                     "Dylint handshake identity or run nonce did not match",
                 ));
             }
+
             let compiler = data
                 .get("compiler")
                 .and_then(Value::as_str)
@@ -785,6 +844,7 @@ impl Driver {
                         "Dylint handshake lacks compiler identity; rebuild the lint library",
                     );
                 })?;
+
             let library_identity = json!({"version": VERSION, "compiler": compiler});
             if self
                 .report
@@ -795,21 +855,25 @@ impl Driver {
                     "Dylint library identity changed between compiler runs",
                 ));
             }
+
             self.set_report("library", library_identity);
             handshakes.push(data);
         }
+
         if handshakes.is_empty() {
             return Err(failure(format!(
                 "statement_spacing did not report a fresh compiler run. Configure its Dylint metadata or pass --library-path; cached diagnostics are not accepted as verification.\n{}",
                 tail(&result.stderr)
             )));
         }
+
         if result.code != 0 && findings.is_empty() {
             return Err(failure(format!(
                 "Dylint failed without actionable statement_spacing diagnostics:\n{}",
                 tail(&result.stderr)
             )));
         }
+
         let mut files = BTreeSet::new();
         let mut token_hashes = BTreeMap::new();
         let mut skipped_boundaries = 0_u64;
@@ -820,6 +884,7 @@ impl Driver {
                 .ok_or_else(|| {
                     return failure("Dylint handshake lacks source token fingerprints");
                 })?;
+
             if let Some(names) = data.get("files") {
                 for name in names
                     .as_array()
@@ -828,6 +893,7 @@ impl Driver {
                     let name = name
                         .as_str()
                         .ok_or_else(|| return failure("invalid Dylint handshake source path"))?;
+
                     let (_, relative) = relative_path(root, Path::new(name))?;
                     let fingerprint = hashes
                         .get(name)
@@ -851,20 +917,24 @@ impl Driver {
                             "target-specific token fingerprints disagree for {relative}"
                         )));
                     }
+
                     token_hashes.insert(relative.clone(), fingerprint.to_owned());
                     files.insert(relative);
                 }
             }
+
             let skipped = match data.get("skipped_boundaries") {
                 Some(value) => value
                     .as_u64()
                     .ok_or_else(|| return failure("invalid Dylint handshake skipped boundaries"))?,
                 None => 0,
             };
+
             skipped_boundaries = skipped_boundaries
                 .checked_add(skipped)
                 .ok_or_else(|| return failure("invalid Dylint handshake skipped boundaries"))?;
         }
+
         if edits
             .iter()
             .any(|edit| return !token_hashes.contains_key(&edit.relative))
@@ -918,7 +988,9 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let path = temp.path().join("rust-toolchain.toml");
         fs::write(&path, "[toolchain]\nchannel = \"1.97.1\"\n")?;
+
         assert_eq!(detect_toolchain(temp.path()), Some("1.97.1".to_owned()));
+
         return Ok(());
     }
 
@@ -935,8 +1007,10 @@ mod tests {
             "[workspace]\n[workspace.metadata.dylint]\nlibraries = []\n",
         )?;
         assert!(has_dylint_metadata(&path));
+
         fs::write(&path, "[workspace]\nmembers = []\n")?;
         assert!(!has_dylint_metadata(&path));
+
         return Ok(());
     }
 }

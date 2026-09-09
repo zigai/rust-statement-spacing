@@ -1,12 +1,11 @@
 //! Bounded control setup relationships from non-deferred mutation facts.
 
+use rust_statement_spacing_core::config::{Expressions, Overflow, UseIn};
+use rust_statement_spacing_core::*;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::iter::once;
 use std::slice::from_ref;
-
-use rust_statement_spacing_core::config::{Expressions, Overflow, UseIn};
-use rust_statement_spacing_core::*;
 
 fn places(ids: &[&str]) -> BTreeSet<Place> {
     return ids.iter().map(|id| return Place::local(*id)).collect();
@@ -45,6 +44,7 @@ fn rendered(
             for _ in 0..blank_lines {
                 source.push('\n');
             }
+
             source.push_str("\n    ");
             gaps.push(Gap {
                 range: ByteRange::new(start, source.len()),
@@ -54,6 +54,7 @@ fn rendered(
                 joinable: true,
             });
         }
+
         let is_control = index == setup.len();
         let start = source.len();
         source.push_str(if is_control { "control;" } else { "setup;" });
@@ -82,6 +83,7 @@ fn rendered(
             anchor: index,
         });
     }
+
     let model = SourceModel {
         lists: vec![UnitList {
             executable_count: units.len(),
@@ -92,6 +94,7 @@ fn rendered(
         }],
         layout_edges: vec![],
     };
+
     return apply_edits(&source, &plan(config, &source, &model)?.edits());
 }
 
@@ -107,6 +110,7 @@ fn nested_updates_attach_without_first_body_reads() -> Result<(), Box<dyn Error>
         mutating_receivers: places(&["outer:state"]),
         ..Facts::default()
     };
+
     for control in [assignment, mutable_call] {
         assert_eq!(
             rendered(
@@ -118,6 +122,7 @@ fn nested_updates_attach_without_first_body_reads() -> Result<(), Box<dyn Error>
             "setup;\n    control;"
         );
     }
+
     return Ok(());
 }
 
@@ -166,6 +171,7 @@ fn late_reads_and_other_bindings_do_not_prove_accumulation() -> Result<(), Box<d
             "{case}"
         );
     }
+
     let receiver_only_setup = Facts {
         known: true,
         receivers: places(&["outer:state"]),
@@ -180,6 +186,7 @@ fn late_reads_and_other_bindings_do_not_prove_accumulation() -> Result<(), Box<d
         )?,
         "setup;\n\n    control;"
     );
+
     return Ok(());
 }
 
@@ -195,12 +202,14 @@ fn accumulator_respects_explicit_scope_and_zero_limit() -> Result<(), Box<dyn Er
     strict.grouping.expressions = Expressions::Strict;
     let mut zero = Config::default();
     zero.grouping.max_before_control = 0;
+
     for config in [header, strict, zero] {
         assert_eq!(
             rendered(&config, &[initialized("state")], &updates("state"), 0)?,
             "setup;\n\n    control;"
         );
     }
+
     let mut whole_body = Config::default();
     whole_body.grouping.use_in = UseIn::WholeBody;
     let read_only = Facts {
@@ -213,6 +222,7 @@ fn accumulator_respects_explicit_scope_and_zero_limit() -> Result<(), Box<dyn Er
         rendered(&whole_body, &[initialized("state")], &read_only, 0)?,
         "setup;\n    control;"
     );
+
     return Ok(());
 }
 
@@ -249,6 +259,7 @@ fn accumulator_remains_subject_to_group_overflow() -> Result<(), Box<dyn Error>>
     ] {
         assert_eq!(rendered(&config, &setup, &control, 0)?, expected);
     }
+
     return Ok(());
 }
 
@@ -274,6 +285,7 @@ fn unknown_facts_remain_conservative_but_do_not_override_zero_limit() -> Result<
             "setup;\n\n    control;"
         );
     }
+
     return Ok(());
 }
 
@@ -290,6 +302,7 @@ fn opaque_body_preserves_proven_population_without_inventing_relationships()
         rendered(&config, &[initialized("state")], &updates("state"), 1)?,
         "setup;\n    control;"
     );
+
     let population = Facts {
         known: false,
         mutating_receivers: places(&["state"]),
@@ -308,6 +321,7 @@ fn opaque_body_preserves_proven_population_without_inventing_relationships()
         )?,
         "setup;\n\n    setup;\n    control;"
     );
+
     for control in [
         Facts::default(),
         Facts {
@@ -324,6 +338,7 @@ fn opaque_body_preserves_proven_population_without_inventing_relationships()
             "setup;\n\n    control;"
         );
     }
+
     for (use_in, limit, join_related) in [
         (UseIn::Header, 1, true),
         (UseIn::HeaderOrFirstBodyStatement, 0, true),
@@ -337,5 +352,6 @@ fn opaque_body_preserves_proven_population_without_inventing_relationships()
             "setup;\n\n    control;"
         );
     }
+
     return Ok(());
 }

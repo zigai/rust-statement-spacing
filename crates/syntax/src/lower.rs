@@ -1,9 +1,3 @@
-use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
-use rust_statement_spacing_core::edits::is_trivia;
-use rust_statement_spacing_core::{
-    ByteRange, Facts, Rule, RuleMask, SourceModel, StatementRole, Unit, UnitKind, UnitList,
-};
-
 use crate::comments::classify_gap;
 use crate::protection::{inside_token_tree, protected};
 use crate::semantics::SemanticIndex;
@@ -11,6 +5,11 @@ use crate::shape;
 use crate::units::{
     code_range, control_body_start, deferred_ranges, expression_node, guard, immediate_body_first,
     is_expression, is_item, is_unit, range, unit_kind,
+};
+use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
+use rust_statement_spacing_core::edits::is_trivia;
+use rust_statement_spacing_core::{
+    ByteRange, Facts, Rule, RuleMask, SourceModel, StatementRole, Unit, UnitKind, UnitList,
 };
 
 fn make_unit(
@@ -34,8 +33,10 @@ fn make_unit(
     } else {
         unit_kind(node)
     };
+
     let header = if category == UnitKind::Control {
         let end = control_body_start(&expression).unwrap_or(code.end);
+
         Some(ByteRange::new(code.start, end))
     } else if category == UnitKind::Let {
         // The initializer of a let-else is inspected; its else body is not.
@@ -43,10 +44,12 @@ fn make_unit(
             .children()
             .find(|child| return child.kind() == SyntaxKind::LET_ELSE)
             .map_or(code.end, |body| return range(&body).start);
+
         Some(ByteRange::new(code.start, end))
     } else {
         None
     };
+
     let declaration = if category == UnitKind::Let {
         node.children()
             .find(|child| return ast::Pat::can_cast(child.kind()))
@@ -54,16 +57,19 @@ fn make_unit(
     } else {
         None
     };
+
     let deferred = deferred_ranges(node);
     let opaque = node
         .descendants()
         .any(|n| matches!(n.kind(), SyntaxKind::MACRO_CALL | SyntaxKind::MACRO_EXPR))
         || !deferred.is_empty();
+
     let first = immediate_body_first(&expression);
     let anchor = semantics.and_then(|s| return s.anchor(code));
     let mut facts = semantics.map_or_else(Facts::default, |semantics| {
         return semantics.facts(code, declaration, header, &first, &deferred, opaque);
     });
+
     if expression.kind() == SyntaxKind::IF_EXPR {
         let condition = expression.children().find(is_expression);
         if condition.is_none_or(|condition| {
@@ -75,11 +81,13 @@ fn make_unit(
             facts.check_of = None;
         }
     }
+
     if let Some(checked) = &facts.check_of
         && facts.header_reads.iter().any(|read| return read != checked)
     {
         facts.check_of = None;
     }
+
     return Unit {
         range: range(node),
         code_range: code,
@@ -133,6 +141,7 @@ pub(crate) fn lower(
         if (k != SyntaxKind::STMT_LIST && !item_list) || inside_token_tree(&container) {
             continue;
         }
+
         let test_statements = shape::test_statements(&container);
         let units: Vec<_> = container
             .children()
@@ -153,6 +162,7 @@ pub(crate) fn lower(
                         let Some(space) = attribute.next_sibling_or_token() else {
                             continue;
                         };
+
                         if space.kind() == SyntaxKind::WHITESPACE
                             && space
                                 .next_sibling_or_token()
@@ -168,15 +178,18 @@ pub(crate) fn lower(
                         }
                     }
                 }
+
                 return unit;
             })
             .collect();
+
         let gaps = units
             .windows(2)
             .filter_map(|pair| {
                 let [u0, u1] = pair else {
                     return None;
                 };
+
                 return Some(classify_gap(source, u0.range, u1.range));
             })
             .collect();
@@ -184,6 +197,7 @@ pub(crate) fn lower(
             .iter()
             .filter(|unit| return !unit.kind.is_item())
             .count();
+
         if k == SyntaxKind::STMT_LIST && !protected(&container) {
             let left = container
                 .children_with_tokens()
@@ -193,6 +207,7 @@ pub(crate) fn lower(
                 .children_with_tokens()
                 .filter_map(|n| return n.into_token())
                 .find(|token| return token.text() == "}");
+
             if let (Some(first), Some(last), Some(left), Some(right)) =
                 (units.first(), units.last(), left, right)
             {
@@ -224,6 +239,7 @@ pub(crate) fn lower(
                 }
             }
         }
+
         model.lists.push(UnitList {
             units,
             gaps,
@@ -232,5 +248,6 @@ pub(crate) fn lower(
             scope: shape::scope(&container),
         });
     }
+
     return model;
 }

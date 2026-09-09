@@ -1,11 +1,9 @@
+use crate::{Result, VERSION, failure, workspace};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::fs;
 use std::path::Path;
-
-use serde_json::{Value, json};
-
-use crate::{Result, VERSION, failure, workspace};
 
 pub(crate) fn fingerprints(root: &Path, findings: &[Value]) -> Result<Vec<String>> {
     let mut sources = BTreeMap::new();
@@ -21,6 +19,7 @@ pub(crate) fn fingerprints(root: &Path, findings: &[Value]) -> Result<Vec<String
                 root.join(workspace::safe_relative(file)?),
             )?),
         };
+
         let offset = |key: &str| -> Result<usize> {
             return finding
                 .get(key)
@@ -39,15 +38,18 @@ pub(crate) fn fingerprints(root: &Path, findings: &[Value]) -> Result<Vec<String
         let after = source
             .get(end..)
             .ok_or_else(|| return failure("invalid baseline span"))?;
+
         let previous = before
             .lines()
             .rev()
             .map(str::trim)
             .find(|line| return !line.is_empty());
+
         let next = after
             .lines()
             .map(str::trim)
             .find(|line| return !line.is_empty());
+
         let anchor = json!([
             file,
             finding["rule"],
@@ -58,6 +60,7 @@ pub(crate) fn fingerprints(root: &Path, findings: &[Value]) -> Result<Vec<String
         ]);
         result.push(workspace::digest(&serde_json::to_vec(&anchor)?));
     }
+
     return Ok(result);
 }
 
@@ -66,6 +69,7 @@ pub(crate) fn document(fingerprints: &[String], coverage: &Value) -> Value {
     for fingerprint in fingerprints {
         *counts.entry(fingerprint).or_default() += 1;
     }
+
     return json!({"schema": 1, "version": VERSION, "coverage": coverage, "findings": counts});
 }
 
@@ -78,6 +82,7 @@ pub(crate) fn filter(
     if fs::metadata(path)?.len() > 32 * 1024 * 1024 {
         return Err(failure("baseline exceeds 32 MiB"));
     }
+
     let baseline: Value = serde_json::from_slice(&fs::read(path)?)?;
     if baseline.get("schema").and_then(Value::as_u64) != Some(1)
         || baseline.get("version").and_then(Value::as_str) != Some(VERSION)
@@ -87,10 +92,12 @@ pub(crate) fn filter(
             "baseline schema, version, or Cargo coverage does not match this check",
         ));
     }
+
     let entries = baseline
         .get("findings")
         .and_then(Value::as_object)
         .ok_or_else(|| return failure("invalid baseline findings"))?;
+
     let mut counts = BTreeMap::new();
     for (fingerprint, count) in entries {
         let count = count
@@ -104,8 +111,10 @@ pub(crate) fn filter(
         {
             return Err(failure("invalid baseline fingerprint"));
         }
+
         counts.insert(fingerprint, count);
     }
+
     let original_count = findings.len();
     let mut fingerprints = fingerprints.iter();
     findings.retain(|_| {
@@ -114,9 +123,11 @@ pub(crate) fn filter(
             && *count > 0
         {
             *count -= 1;
+
             return false;
         }
         return true;
     });
+
     return Ok(original_count - findings.len());
 }

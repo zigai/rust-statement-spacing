@@ -1,3 +1,4 @@
+use crate::{Result, failure};
 use globset::{GlobBuilder, GlobMatcher};
 #[cfg(unix)]
 use rustix::fs::{Mode, OFlags, open};
@@ -13,8 +14,6 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::os::windows::fs::symlink_file;
 use std::path::{Component, Path, PathBuf};
 use std::str;
-
-use crate::{Result, failure};
 
 const IGNORED_DIRS: [&str; 6] = [
     ".git",
@@ -47,6 +46,7 @@ impl GitIgnore {
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
+
             let (negated, pattern) = trimmed.strip_prefix('!').map_or_else(
                 || {
                     return trimmed
@@ -59,16 +59,19 @@ impl GitIgnore {
             if pattern.is_empty() {
                 continue;
             }
+
             let (must_be_dir, pattern) = pattern
                 .strip_suffix('/')
                 .map_or((false, pattern), |rest| return (true, rest));
             if pattern.is_empty() {
                 continue;
             }
+
             let (anchored, pattern) = pattern.strip_prefix('/').map_or_else(
                 || return (pattern.contains('/'), pattern),
                 |rest| return (true, rest),
             );
+
             if let Ok(glob) = GlobBuilder::new(pattern).literal_separator(true).build() {
                 rules.push(GitIgnoreRule {
                     matcher: glob.compile_matcher(),
@@ -78,6 +81,7 @@ impl GitIgnore {
                 });
             }
         }
+
         return Self { base, rules };
     }
 
@@ -87,11 +91,13 @@ impl GitIgnore {
         let file_name = path_in_base
             .file_name()
             .and_then(|name| return name.to_str());
+
         let mut matched = None;
         for rule in &self.rules {
             if rule.must_be_dir && !is_dir {
                 continue;
             }
+
             let is_match = if rule.anchored {
                 rule.matcher.is_match(&path_str)
             } else if let Some(file_name) = file_name {
@@ -99,10 +105,12 @@ impl GitIgnore {
             } else {
                 false
             };
+
             if is_match {
                 matched = Some(!rule.negated);
             }
         }
+
         return matched;
     }
 }
@@ -117,9 +125,11 @@ impl GitIgnoreStack {
         let Ok(relative) = dir.strip_prefix(root) else {
             return;
         };
+
         // Git metadata is deliberately absent from replicas. Nested ignore
         // files must therefore apply equally with and without a .git marker.
         let gitignore_path = dir.join(".gitignore");
+
         if let Ok(content) = fs::read_to_string(&gitignore_path) {
             self.ignores
                 .push(GitIgnore::parse(relative.to_path_buf(), &content));
@@ -133,19 +143,23 @@ impl GitIgnoreStack {
                 ignored = state;
             }
         }
+
         return ignored;
     }
 
     pub(crate) fn is_path_or_parent_ignored(&self, relative: &Path) -> bool {
         let mut current = PathBuf::new();
         let components: Vec<_> = relative.components().collect();
+
         for (i, component) in components.iter().enumerate() {
             current.push(component);
+
             let is_dir = i + 1 < components.len();
             if self.is_ignored(&current, is_dir) {
                 return true;
             }
         }
+
         return false;
     }
 }
@@ -201,6 +215,7 @@ pub(crate) fn relative_path(root: &Path, name: &Path) -> Result<(PathBuf, String
         .to_str()
         .ok_or_else(|| return failure("workspace path is not UTF-8"))?
         .replace('\\', "/");
+
     return Ok((path, relative));
 }
 
@@ -209,6 +224,7 @@ pub(crate) fn safe_relative(name: &str) -> Result<PathBuf> {
         .components()
         .filter(|part| return !matches!(part, Component::CurDir))
         .collect();
+
     if name.is_empty()
         || path.components().next().is_none()
         || path
@@ -224,6 +240,7 @@ pub(crate) fn assert_no_symlink(root: &Path, path: &Path) -> Result<()> {
     let relative = path
         .strip_prefix(root)
         .map_err(|_| return failure(format!("path escaped workspace: {}", path.display())))?;
+
     let mut current = root.to_path_buf();
     for component in relative.components() {
         if !matches!(component, Component::Normal(_)) {
@@ -232,7 +249,9 @@ pub(crate) fn assert_no_symlink(root: &Path, path: &Path) -> Result<()> {
                 path.display()
             )));
         }
+
         current.push(component);
+
         match fs::symlink_metadata(&current) {
             Ok(info) if info.file_type().is_symlink() => {
                 return Err(failure(format!(
@@ -245,6 +264,7 @@ pub(crate) fn assert_no_symlink(root: &Path, path: &Path) -> Result<()> {
             Err(error) => return Err(error.into()),
         }
     }
+
     return Ok(());
 }
 
@@ -255,6 +275,7 @@ pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>> {
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
         Mode::empty(),
     )?;
+
     let mut file = File::from(descriptor);
     if !file.metadata()?.is_file() {
         return Err(failure(format!(
@@ -262,8 +283,10 @@ pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>> {
             path.display()
         )));
     }
+
     let mut data = Vec::new();
     io::copy(&mut file, &mut data)?;
+
     return Ok(data);
 }
 
@@ -295,12 +318,14 @@ fn file_link(
     gitignores: &GitIgnoreStack,
 ) -> Result<PathBuf> {
     let original = fs::read_link(path)?;
+
     let mut link = original.clone();
     let mut current = path.to_path_buf();
     for _ in 0..40 {
         let parent = current
             .parent()
             .ok_or_else(|| return failure("symlink has no parent"))?;
+
         let mut relative = parent.strip_prefix(root)?.to_path_buf();
         for component in link.components() {
             match component {
@@ -315,6 +340,7 @@ fn file_link(
                 }
             }
         }
+
         if relative.components().any(|component| {
             return IGNORED_DIRS
                 .iter()
@@ -329,11 +355,14 @@ fn file_link(
                 path.display()
             )));
         }
+
         current = root.join(&relative);
         let parent = current
             .parent()
             .ok_or_else(|| return failure("symlink target has no parent"))?;
+
         assert_no_symlink(root, parent)?;
+
         match fs::symlink_metadata(&current) {
             Ok(info) if info.is_file() => return Ok(original),
             Ok(info) if info.file_type().is_symlink() => link = fs::read_link(&current)?,
@@ -347,6 +376,7 @@ fn file_link(
             }
         }
     }
+
     return Err(failure(format!(
         "symlink chain is cyclic or too deep: {}",
         path.display()
@@ -358,18 +388,22 @@ pub(crate) fn scan(root: &Path, limit: u64, exclusions: &[PathBuf]) -> Result<Sn
     let mut total = 0_u64;
     let mut gitignores = GitIgnoreStack::default();
     gitignores.push_dir(root, root);
+
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
         if directory != root {
             gitignores.push_dir(root, &directory);
         }
+
         let mut entries = fs::read_dir(&directory)?.collect::<io::Result<Vec<_>>>()?;
         entries.sort_by_key(fs::DirEntry::file_name);
+
         for entry in entries {
             let name = entry.file_name();
             if IGNORED_DIRS.iter().any(|ignored| return name == *ignored) {
                 continue;
             }
+
             let path = entry.path();
             let relative = path.strip_prefix(root)?;
             if exclusions
@@ -378,32 +412,38 @@ pub(crate) fn scan(root: &Path, limit: u64, exclusions: &[PathBuf]) -> Result<Sn
             {
                 continue;
             }
+
             let info = fs::symlink_metadata(&path)?;
             let is_dir = info.is_dir();
             if gitignores.is_ignored(relative, is_dir) {
                 continue;
             }
+
             if is_dir {
                 pending.push(path);
                 continue;
             }
+
             let link = if info.file_type().is_symlink() {
                 Some(file_link(root, &path, exclusions, &gitignores)?)
             } else {
                 None
             };
+
             if name
                 .as_encoded_bytes()
                 .starts_with(b".statement-spacing-tmp-")
             {
                 continue;
             }
+
             if !info.is_file() && link.is_none() {
                 return Err(failure(format!(
                     "non-regular workspace file is not supported: {}",
                     path.display()
                 )));
             }
+
             total = total
                 .checked_add(info.len())
                 .filter(|size| return *size <= limit)
@@ -412,6 +452,7 @@ pub(crate) fn scan(root: &Path, limit: u64, exclusions: &[PathBuf]) -> Result<Sn
                         "workspace snapshot exceeds --max-snapshot-mib; nothing was changed",
                     );
                 })?;
+
             let data = match &link {
                 Some(target) => target.as_os_str().as_encoded_bytes().to_vec(),
                 None => read_regular(&path)?,
@@ -422,6 +463,7 @@ pub(crate) fn scan(root: &Path, limit: u64, exclusions: &[PathBuf]) -> Result<Sn
                     path.display()
                 )));
             }
+
             let relative = path.strip_prefix(root)?;
             let name = relative
                 .to_str()
@@ -438,6 +480,7 @@ pub(crate) fn scan(root: &Path, limit: u64, exclusions: &[PathBuf]) -> Result<Sn
             );
         }
     }
+
     return Ok(result);
 }
 
@@ -451,6 +494,7 @@ pub(crate) fn assert_snapshot(
     if actual == *expected {
         return Ok(());
     }
+
     let actual_names: BTreeSet<_> = actual.keys().collect();
     let expected_names: BTreeSet<_> = expected.keys().collect();
     let changed = actual_names
@@ -465,6 +509,7 @@ pub(crate) fn assert_snapshot(
         .take(10)
         .map(String::as_str)
         .collect::<Vec<_>>();
+
     return Err(failure(format!(
         "workspace changed during validation: {}",
         changed.join(", ")
@@ -483,8 +528,10 @@ pub(crate) fn copy_snapshot(
             replica.display()
         )));
     }
+
     let mut gitignores = GitIgnoreStack::default();
     gitignores.push_dir(root, root);
+
     fs::create_dir_all(replica)?;
     for (name, state) in files {
         let source = root.join(name);
@@ -492,23 +539,29 @@ pub(crate) fn copy_snapshot(
             let parent = source
                 .parent()
                 .ok_or_else(|| return failure("symlink has no parent"))?;
+
             assert_no_symlink(root, parent)?;
             if file_link(root, &source, exclusions, &gitignores)? != *link {
                 return Err(failure(format!("source changed while copying: {name}")));
             }
+
             link.as_os_str().as_encoded_bytes().to_vec()
         } else {
             assert_no_symlink(root, &source)?;
+
             read_regular(&source)?
         };
         if digest(&data) != state.digest {
             return Err(failure(format!("source changed while copying: {name}")));
         }
+
         let destination = replica.join(name);
         let parent = destination
             .parent()
             .ok_or_else(|| return failure("replica file has no parent"))?;
+
         fs::create_dir_all(parent)?;
+
         if let Some(link) = &state.link {
             #[cfg(unix)]
             symlink(link, destination)?;
@@ -520,6 +573,7 @@ pub(crate) fn copy_snapshot(
             fs::set_permissions(destination, fs::Permissions::from_mode(state.mode))?;
         }
     }
+
     return Ok(());
 }
 
@@ -540,6 +594,7 @@ pub(crate) fn reject_ancestor_config(root: &Path) -> Result<()> {
             }
         }
     }
+
     if let Some(rustfmt) = env::var_os("RUSTFMT")
         && !rustfmt.is_empty()
         && !Path::new(&rustfmt).is_absolute()
@@ -556,18 +611,21 @@ pub(crate) fn validate_metadata(root: &Path, metadata: &Value) -> Result<()> {
             .map(str::to_owned)
             .ok_or_else(|| return failure("malformed Cargo metadata"));
     };
+
     let root = canonical(root)?;
     if canonical(Path::new(&text(&metadata["workspace_root"])?))? != root {
         return Err(failure(
             "Cargo resolved a different workspace in the verification replica",
         ));
     }
+
     let members = metadata["workspace_members"]
         .as_array()
         .ok_or_else(|| return failure("malformed Cargo metadata"))?;
     let packages = metadata["packages"]
         .as_array()
         .ok_or_else(|| return failure("malformed Cargo metadata"))?;
+
     let mut found = false;
     for package in packages
         .iter()
@@ -581,6 +639,7 @@ pub(crate) fn validate_metadata(root: &Path, metadata: &Value) -> Result<()> {
         {
             relative_path(&root, Path::new(&text(&target["src_path"])?))?;
         }
+
         for dependency in package["dependencies"]
             .as_array()
             .ok_or_else(|| return failure("malformed Cargo metadata"))?
@@ -593,6 +652,7 @@ pub(crate) fn validate_metadata(root: &Path, metadata: &Value) -> Result<()> {
             }
         }
     }
+
     if !found {
         return Err(failure("the workspace has no compilable member packages"));
     }
@@ -606,6 +666,7 @@ fn validate_manifest_value(path: &Path, value: &toml::Value) -> Result<()> {
                 if matches!(key.as_str(), "path" | "build")
                     && let Some(name) = child.as_str().filter(|name| {
                         let path = Path::new(name);
+
                         return path.is_absolute() || path.has_root();
                     })
                 {
@@ -614,6 +675,7 @@ fn validate_manifest_value(path: &Path, value: &toml::Value) -> Result<()> {
                         path.display()
                     )));
                 }
+
                 validate_manifest_value(path, child)?;
             }
         }
@@ -624,6 +686,7 @@ fn validate_manifest_value(path: &Path, value: &toml::Value) -> Result<()> {
         }
         _ => {}
     }
+
     return Ok(());
 }
 
@@ -631,10 +694,12 @@ pub(crate) fn validate_manifest_paths(root: &Path, exclusions: &[PathBuf]) -> Re
     let mut pending = vec![root.to_path_buf()];
     let mut gitignores = GitIgnoreStack::default();
     gitignores.push_dir(root, root);
+
     while let Some(directory) = pending.pop() {
         if directory != root {
             gitignores.push_dir(root, &directory);
         }
+
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
             let path = entry.path();
@@ -645,6 +710,7 @@ pub(crate) fn validate_manifest_paths(root: &Path, exclusions: &[PathBuf]) -> Re
             {
                 continue;
             }
+
             let kind = entry.file_type()?;
             let is_dir = kind.is_dir();
             if IGNORED_DIRS
@@ -654,6 +720,7 @@ pub(crate) fn validate_manifest_paths(root: &Path, exclusions: &[PathBuf]) -> Re
             {
                 continue;
             }
+
             if is_dir {
                 pending.push(entry.path());
             } else if entry.file_name() == "Cargo.toml" && !kind.is_dir() {
@@ -671,10 +738,12 @@ pub(crate) fn validate_manifest_paths(root: &Path, exclusions: &[PathBuf]) -> Re
                         path.display()
                     ));
                 })?;
+
                 validate_manifest_value(&path, &value)?;
             }
         }
     }
+
     return Ok(());
 }
 
@@ -709,6 +778,7 @@ mod tests {
             fs::read_to_string(replica.join("vendor/CHAIN.md"))?,
             "instructions"
         );
+
         fs::write(replica.join("vendor/AGENTS.md"), "replica only")?;
         assert_eq!(
             fs::read_to_string(replica.join("vendor/CLAUDE.md"))?,
@@ -718,9 +788,11 @@ mod tests {
             fs::read_to_string(root.join("vendor/CLAUDE.md"))?,
             "instructions"
         );
+
         fs::remove_file(root.join("vendor/CLAUDE.md"))?;
         symlink("OTHER.md", root.join("vendor/CLAUDE.md"))?;
         assert!(assert_snapshot(&root, &original, 1024, &[]).is_err());
+
         return Ok(());
     }
 
@@ -739,13 +811,17 @@ mod tests {
         for target in ["../external", "target/generated", "link", "target"] {
             let link = root.join("link");
             symlink(target, &link)?;
+
             assert!(scan(&root, 1024, &[]).is_err(), "accepted {target}");
+
             fs::remove_file(link)?;
         }
+
         symlink("../external", root.join("indirect"))?;
         symlink("indirect", root.join("link"))?;
         let gitignores = GitIgnoreStack::default();
         assert!(file_link(&root, &root.join("link"), &[], &gitignores).is_err());
+
         return Ok(());
     }
 
@@ -765,7 +841,9 @@ mod tests {
         mkfifoat(CWD, root.join("results/live.fifo"), Mode::RUSR | Mode::WUSR)?;
         fs::write(root.join("results-kept/source.rs"), "fn main() {}")?;
         let exclusions = vec![safe_relative("results")?];
+
         assert!(scan(&root, 1024, &[]).is_err());
+
         let original = scan(&root, 1024, &exclusions)?;
         copy_snapshot(&root, &replica, &original, &exclusions)?;
         assert_eq!(
@@ -773,10 +851,12 @@ mod tests {
             "fn main() {}"
         );
         assert!(!replica.join("results").exists());
+
         fs::write(root.join("results/new-output"), "not tracked")?;
         assert_snapshot(&root, &original, 1024, &exclusions)?;
         symlink("results/new-output", root.join("bypass"))?;
         assert!(scan(&root, 1024, &exclusions).is_err());
+
         return Ok(());
     }
 
@@ -798,15 +878,18 @@ mod tests {
             root.join(".gitignore"),
             "/benchmarks/results/\nnode_modules/\n*.ignored\n.env.*\n!.env.example\n",
         )?;
+
         mkfifoat(
             CWD,
             root.join("benchmarks/results/large-live.fifo"),
             Mode::RUSR | Mode::WUSR,
         )?;
+
         fs::write(
             root.join("packages/typescript/node_modules/package.json"),
             "{}",
         )?;
+
         fs::write(root.join("src/lib.rs"), "pub fn run() {}")?;
         fs::write(root.join("file.ignored"), "not tracked")?;
         fs::write(root.join(".env.example"), "PUBLIC_KEY=123")?;
@@ -822,6 +905,7 @@ mod tests {
         assert!(!original.contains_key("benchmarks/results/large-live.fifo"));
 
         copy_snapshot(&root, &replica, &original, &[])?;
+
         assert_eq!(
             fs::read_to_string(replica.join("src/lib.rs"))?,
             "pub fn run() {}"
@@ -833,6 +917,7 @@ mod tests {
             fs::read_to_string(replica.join(".env.example"))?,
             "PUBLIC_KEY=123"
         );
+
         return Ok(());
     }
 }

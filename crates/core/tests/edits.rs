@@ -20,8 +20,10 @@ fn non_trivia_and_stale_edits_are_rejected() {
         rule: Rule::Bindings,
     };
     assert!(apply_edits("a b", &[edit.clone()]).is_ok());
+
     edit.replacement = "unsafe{}".into();
     assert!(apply_edits("a b", &[edit.clone()]).is_err());
+
     edit.replacement = "\n".into();
     assert!(apply_edits("axb", &[edit]).is_err());
 }

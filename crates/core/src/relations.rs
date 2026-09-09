@@ -1,9 +1,8 @@
 //! Relationships between resolved local places.
 
-use std::collections::BTreeSet;
-
 use crate::config::{Grouping, SelfFields, UseIn};
 use crate::model::{Facts, Place};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Whether two units have a known semantic connection.
@@ -20,6 +19,7 @@ fn places_overlap(a: &Place, b: &Place, mode: SelfFields) -> bool {
     if a.local != b.local {
         return false;
     }
+
     if mode == SelfFields::Root && a.is_self && b.is_self {
         return true;
     }
@@ -88,6 +88,7 @@ pub(crate) fn relationship(a: &Facts, b: &Facts, settings: &Grouping) -> Relatio
     if !a.known || !b.known {
         return Relationship::Unknown;
     }
+
     if direct_producer(a, b, settings)
         || intersects(&outputs(b), &a.reads, settings.self_fields)
         || (settings.same_receiver && intersects(&a.receivers, &b.receivers, settings.self_fields))
@@ -109,6 +110,7 @@ pub(crate) fn control_inputs(facts: &Facts, mode: UseIn) -> BTreeSet<Place> {
         UseIn::HeaderOrFirstBodyStatement => inputs.extend(facts.first_body_reads.clone()),
         UseIn::WholeBody => inputs.extend(facts.whole_body_reads.clone()),
     }
+
     return inputs;
 }
 
@@ -158,6 +160,7 @@ mod tests {
         });
         let mut c = Config::default();
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Related);
+
         c.grouping.self_fields = SelfFields::Distinct;
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Unrelated);
     }
@@ -165,6 +168,7 @@ mod tests {
     #[test]
     fn producer_policy_does_not_conflate_unrelated_places() {
         let c = Config::default();
+
         for (left, right) in [
             (
                 Place {
@@ -207,10 +211,13 @@ mod tests {
         b.direct_callees.insert("crate-b:function".into());
         let mut c = Config::default();
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Unrelated);
+
         b.direct_callees = a.direct_callees.clone();
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Related);
+
         c.grouping.same_callee = false;
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Unrelated);
+
         c.grouping.same_callee = true;
         b.known = false;
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Unknown);
@@ -233,11 +240,14 @@ mod tests {
         let mut c = Config::default();
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Related);
         assert!(!direct_producer(&a, &b, &c.grouping));
+
         c.grouping.same_object = false;
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Unrelated);
+
         c.grouping.same_object = true;
         c.grouping.same_receiver = false;
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Unrelated);
+
         c.grouping.same_receiver = true;
         b.receivers.clear();
         b.receivers.insert(Place::local("other-inputs"));
@@ -255,8 +265,10 @@ mod tests {
                 is_self: false,
             });
         }
+
         let mut c = Config::default();
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Related);
+
         c.grouping.shared_inputs = false;
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Unrelated);
     }
@@ -269,11 +281,14 @@ mod tests {
         b.writes.insert(Place::local("counter"));
         let mut c = Config::default();
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Unrelated);
+
         a.mutating_receivers.insert(Place::local("collection"));
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Related);
         assert!(!direct_producer(&a, &b, &c.grouping));
+
         c.grouping.consecutive_mutations = false;
         assert_eq!(relationship(&a, &b, &c.grouping), Relationship::Unrelated);
+
         a.mutating_receivers.clear();
         a.writes.insert(Place::local("collection"));
         c.grouping.consecutive_mutations = true;

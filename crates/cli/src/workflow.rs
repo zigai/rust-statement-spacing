@@ -1,13 +1,11 @@
-use std::collections::BTreeMap;
-use std::fs;
-use std::str;
-
-use serde_json::{Value, json};
-
 use crate::{
     Options, Result, VERSION, baseline, cargo, diff, failure, protocol, report, transaction,
     workspace,
 };
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::fs;
+use std::str;
 
 pub(crate) struct Driver {
     pub(crate) options: Options,
@@ -21,7 +19,9 @@ impl Driver {
             "schema": 1, "version": VERSION, "mode": options.command,
             "status": "running", "commands": [], "changed_files": [],
         });
+
         let toolchain = options.format_toolchain.clone();
+
         return Self {
             options,
             report,
@@ -53,14 +53,17 @@ impl Driver {
                 json!(transaction::recover(&root)?),
             );
             self.set_report("status", "recovered".into());
+
             return Ok(0);
         }
+
         let unfinished = root.join(".statement-spacing/transactions");
         if unfinished.exists() && fs::read_dir(&unfinished)?.next().transpose()?.is_some() {
             return Err(failure(
                 "unfinished transaction found; run cargo statement-spacing recover first",
             ));
         }
+
         workspace::reject_ancestor_config(&root)?;
         workspace::validate_manifest_paths(&root, &exclusions)?;
         if !root.join("Cargo.lock").is_file() {
@@ -68,6 +71,7 @@ impl Driver {
                 "verified mode requires Cargo.lock; run cargo generate-lockfile first",
             ));
         }
+
         let identity = self.identity(&root)?;
         self.set_report("formatter", identity.clone());
         let original = workspace::scan(&root, limit, &exclusions)?;
@@ -75,9 +79,11 @@ impl Driver {
         if !self.options.format_first {
             self.fmt(&root, false)?;
         }
+
         let temporary = tempfile::Builder::new()
             .prefix("statement-spacing-")
             .tempdir()?;
+
         let replica = temporary.path().join("workspace");
         workspace::copy_snapshot(&root, &replica, &original, &exclusions)?;
         let replica = workspace::canonical(&replica)?;
@@ -108,9 +114,11 @@ impl Driver {
             protocol::apply(&replica, &layout.edits)?;
             self.fmt(&replica, true)?;
         }
+
         let before_lint = workspace::scan(&replica, limit, &exclusions)?;
         let mut first = self.lint(&replica, temporary.path(), "initial", &root)?;
         workspace::assert_snapshot(&replica, &before_lint, limit, &exclusions)?;
+
         let mut features: Vec<_> = self
             .options
             .features
@@ -134,10 +142,12 @@ impl Driver {
                         baseline::filter(path, &coverage, &fingerprints, &mut first.findings)?;
                     self.set_report("baseline_matched", json!(matched));
                 }
+
                 Some(baseline::document(&fingerprints, &coverage))
             } else {
                 None
             };
+
         let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
         for finding in &first.findings {
             let rule = finding
@@ -146,6 +156,7 @@ impl Driver {
                 .ok_or_else(|| return failure("invalid finding rule"))?;
             *counts.entry(rule).or_default() += 1;
         }
+
         self.set_report("rule_counts", json!(counts));
         self.set_report("findings", json!(first.findings));
         self.set_report("checked_files", json!(first.checked_files));
@@ -157,11 +168,14 @@ impl Driver {
                 let document = baseline_document
                     .as_ref()
                     .ok_or_else(|| return failure("missing baseline document"))?;
+
                 report::write_report(path, document)?;
                 self.set_report("baseline_written", json!(path));
                 self.set_report("status", "baselined".into());
+
                 return Ok(0);
             }
+
             self.set_report(
                 "status",
                 if first.findings.is_empty() {
@@ -171,8 +185,10 @@ impl Driver {
                 }
                 .into(),
             );
+
             return Ok(u8::from(!first.findings.is_empty()));
         }
+
         if first.findings.iter().any(|finding| {
             return finding.get("fixable").and_then(Value::as_bool) != Some(true);
         }) {
@@ -180,31 +196,37 @@ impl Driver {
                 "at least one finding has no unambiguous machine-applicable fix",
             ));
         }
+
         protocol::apply(&replica, &first.edits)?;
         let candidate = workspace::scan(&replica, limit, &exclusions)?;
         self.fmt(&replica, false)?;
         let second = self.lint(&replica, temporary.path(), "fixed", &root)?;
         workspace::assert_snapshot(&replica, &candidate, limit, &exclusions)?;
+
         if !second.findings.is_empty() || !second.edits.is_empty() {
             return Err(failure(
                 "candidate is not a lint fixed point; the complete transaction was rejected",
             ));
         }
+
         if first.checked_files != second.checked_files {
             return Err(failure(
                 "compiler coverage changed between the original and candidate runs",
             ));
         }
+
         if first.token_hashes != second.token_hashes {
             return Err(failure(
                 "candidate changed code/comment/literal tokens; transaction rejected",
             ));
         }
+
         if candidate.keys().ne(original.keys()) {
             return Err(failure(
                 "validation created or deleted project files; unsupported path-sensitive build",
             ));
         }
+
         let mut changed = BTreeMap::new();
         for (relative, state) in &candidate {
             if original.get(relative) != Some(state) {
@@ -213,9 +235,11 @@ impl Driver {
                         "validation modified a non-Rust project file: {relative}"
                     )));
                 }
+
                 changed.insert(relative.clone(), fs::read(replica.join(relative))?);
             }
         }
+
         self.set_report("proposed_files", json!(changed.keys().collect::<Vec<_>>()));
         cargo::check_interrupted()?;
         if self.options.dry_run {
@@ -223,6 +247,7 @@ impl Driver {
             if self.identity(&root)? != identity {
                 return Err(failure("formatter identity changed during verification"));
             }
+
             if self.options.diff {
                 let mut patch = String::new();
                 for (name, bytes) in &changed {
@@ -232,9 +257,12 @@ impl Driver {
                         str::from_utf8(bytes)?,
                     )?);
                 }
+
                 self.set_report("diff", patch.into());
             }
+
             workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
+
             self.set_report(
                 "status",
                 if changed.is_empty() {
@@ -252,15 +280,19 @@ impl Driver {
                     "rustfmt_original_directory": false,
                 }),
             );
+
             temporary.close()?;
+
             return Ok(u8::from(!changed.is_empty()));
         }
+
         let final_check = || {
             if self.identity(&root)? != identity {
                 return Err(failure("formatter identity changed during the transaction"));
             }
             return self.fmt(&root, false);
         };
+
         if changed.is_empty() {
             workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
             let mut final_check = final_check;
@@ -268,6 +300,7 @@ impl Driver {
         } else {
             transaction::commit(&root, &original, &changed, final_check, limit, &exclusions)?;
         }
+
         self.set_report("changed_files", json!(changed.keys().collect::<Vec<_>>()));
         self.set_report(
             "status",
@@ -286,7 +319,9 @@ impl Driver {
                 "code_comment_literal_tokens_preserved": true,
             }),
         );
+
         temporary.close()?;
+
         return Ok(0);
     }
 }
@@ -299,6 +334,7 @@ fn source_fingerprint(snapshot: &workspace::Snapshot) -> Result<String> {
         if index != 0 {
             encoded.push_str(", ");
         }
+
         let quoted = serde_json::to_string(name)?;
         for character in quoted.chars() {
             if character.is_ascii() {
@@ -310,10 +346,13 @@ fn source_fingerprint(snapshot: &workspace::Snapshot) -> Result<String> {
                 }
             }
         }
+
         encoded.push_str(": \"");
         encoded.push_str(&state.digest);
         encoded.push('"');
     }
+
     encoded.push('}');
+
     return Ok(workspace::digest(encoded.as_bytes()));
 }

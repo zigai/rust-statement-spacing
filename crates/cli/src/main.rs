@@ -10,6 +10,8 @@ mod transaction;
 mod workflow;
 mod workspace;
 
+use clap::Parser;
+use clap::error::ErrorKind;
 use std::env;
 use std::error::Error as StdError;
 use std::io;
@@ -17,10 +19,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::result::Result as StdResult;
 
-use clap::Parser;
-use clap::error::ErrorKind;
-
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub(crate) type Error = Box<dyn StdError + Send + Sync>;
 pub(crate) type Result<T, E = Error> = StdResult<T, E>;
 
@@ -114,6 +114,7 @@ fn main() -> ExitCode {
     {
         arguments.remove(1);
     }
+
     let options = Options::parse_from(arguments);
     let invalid = if (options.format_first || options.dry_run) && options.command != "fix" {
         Some("--format-first and --dry-run are valid only with fix")
@@ -155,6 +156,7 @@ fn main() -> ExitCode {
             .error(ErrorKind::ArgumentConflict, message)
             .exit();
     }
+
     return execute(options);
 }
 
@@ -165,6 +167,7 @@ fn same_destination(left: &Path, right: &Path) -> bool {
                 .parent()
                 .filter(|parent| return !parent.as_os_str().is_empty())
                 .unwrap_or_else(|| return Path::new("."));
+
             return parent.canonicalize().map(|parent| {
                 return path
                     .file_name()
@@ -172,6 +175,7 @@ fn same_destination(left: &Path, right: &Path) -> bool {
             });
         });
     };
+
     return left == right
         || matches!((resolve(left), resolve(right)), (Ok(left), Ok(right)) if left == right);
 }
@@ -190,13 +194,16 @@ fn execute(options: Options) -> ExitCode {
             } else {
                 ("error", error.to_string(), 2)
             };
+
             if let Some(map) = driver.report.as_object_mut() {
                 map.insert("status".into(), status.into());
                 map.insert("error".into(), error_message.into());
             }
+
             exit_code
         }
     };
+
     return ExitCode::from(report::emit(
         &driver.options,
         &driver.report,

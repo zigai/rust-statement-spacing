@@ -1,8 +1,7 @@
-use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxKind, SyntaxNode};
-use rust_statement_spacing_core::{ByteRange, SourceModel};
-
 use crate::lower::lower;
 use crate::semantics::SemanticIndex;
+use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxKind, SyntaxNode};
+use rust_statement_spacing_core::{ByteRange, SourceModel};
 
 /// Lossless syntax tree and its derived source-unit model.
 pub struct ParsedSource {
@@ -19,6 +18,7 @@ pub struct ParsedSource {
 pub fn parse_source(source: &str, edition: &str) -> Result<ParsedSource, String> {
     let root = parse_root(source, edition)?;
     let model = lower(&root, source, None);
+
     return Ok(ParsedSource { root, model });
 }
 
@@ -30,6 +30,7 @@ fn parse_root(source: &str, edition: &str) -> Result<SyntaxNode, String> {
         "2024" => Edition::Edition2024,
         _ => return Err(format!("unsupported Rust edition: {edition}")),
     };
+
     let parse = SourceFile::parse(source, edition);
     if !parse.errors().is_empty() {
         return Err(format!(
@@ -66,6 +67,7 @@ impl ParsedSource {
 /// Rejects unsupported editions and syntax errors as in [`parse_source`].
 pub fn token_fingerprint(source: &str, edition: &str) -> Result<Vec<(String, String)>, String> {
     let root = parse_root(source, edition)?;
+
     return Ok(root
         .descendants_with_tokens()
         .filter_map(|element| return element.into_token())

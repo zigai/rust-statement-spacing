@@ -8,11 +8,14 @@ pub(crate) fn classify_gap(source: &str, left: ByteRange, right: ByteRange) -> G
     let Some(text) = source.get(range.as_range()) else {
         return protected(range);
     };
+
     let mut start = range.start;
     let mut end = range.end;
+
     if text.contains("/*") || text.contains("*/") {
         return protected(range);
     }
+
     if text.contains("//") {
         let first_newline = text.find('\n');
         let first_comment = text.find("//");
@@ -25,20 +28,24 @@ pub(crate) fn classify_gap(source: &str, left: ByteRange, right: ByteRange) -> G
             };
             start = range.start + newline;
         }
+
         let Some(remaining) = source.get(start..end) else {
             return protected(range);
         };
+
         if let Some(comment) = remaining.find("//") {
             let absolute_comment = start + comment;
             let comment_line_start = source
                 .get(..absolute_comment)
                 .and_then(|prefix| return prefix.rfind('\n'))
                 .map_or(start, |newline| return newline + 1);
+
             // A leading comment is attached only when every remaining line is
             // a comment and there is no empty line before the following unit.
             let Some(suffix) = source.get(comment_line_start..end) else {
                 return protected(range);
             };
+
             let mut lines = suffix.split('\n').peekable();
             while let Some(line) = lines.next() {
                 if lines.peek().is_none() {
@@ -49,8 +56,10 @@ pub(crate) fn classify_gap(source: &str, left: ByteRange, right: ByteRange) -> G
                     return protected(range);
                 }
             }
+
             end = comment_line_start;
         }
+
         // Keep comments out of a mandatory joining pair, even when a leading
         // comment has a clear owner. Separation before that owner is still safe.
         let Some(old) = source.get(start..end) else {
@@ -67,6 +76,7 @@ pub(crate) fn classify_gap(source: &str, left: ByteRange, right: ByteRange) -> G
             joinable: false,
         };
     }
+
     if !text.bytes().all(is_trivia) {
         return protected(range);
     }

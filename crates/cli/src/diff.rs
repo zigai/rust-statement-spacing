@@ -1,12 +1,12 @@
-use std::fmt::Write as _;
-
 use crate::Result;
+use std::fmt::Write as _;
 
 // A single hunk per file keeps generation linear and the patch deterministic.
 pub(crate) fn unified(name: &str, before: &str, after: &str) -> Result<String> {
     if before == after {
         return Ok(String::new());
     }
+
     let old: Vec<_> = before.split_inclusive('\n').collect();
     let new: Vec<_> = after.split_inclusive('\n').collect();
     let prefix = old
@@ -21,6 +21,7 @@ pub(crate) fn unified(name: &str, before: &str, after: &str) -> Result<String> {
         .take(old.len().min(new.len()) - prefix)
         .take_while(|(a, b)| return a == b)
         .count();
+
     let start = prefix.saturating_sub(3);
     let old_end = old.len() - suffix.saturating_sub(3);
     let new_end = new.len() - suffix.saturating_sub(3);
@@ -35,18 +36,23 @@ pub(crate) fn unified(name: &str, before: &str, after: &str) -> Result<String> {
         start + usize::from(new_count != 0),
         new_count
     );
+
     for line in old.iter().take(prefix).skip(start) {
         append_line(&mut output, ' ', line)?;
     }
+
     for line in old.iter().take(old.len() - suffix).skip(prefix) {
         append_line(&mut output, '-', line)?;
     }
+
     for line in new.iter().take(new.len() - suffix).skip(prefix) {
         append_line(&mut output, '+', line)?;
     }
+
     for line in old.iter().take(old_end).skip(old.len() - suffix) {
         append_line(&mut output, ' ', line)?;
     }
+
     return Ok(output);
 }
 
@@ -55,6 +61,7 @@ fn append_line(output: &mut String, prefix: char, line: &str) -> Result<()> {
     if !line.ends_with('\n') {
         output.push_str("\n\\ No newline at end of file\n");
     }
+
     return Ok(());
 }
 
@@ -70,17 +77,18 @@ fn quote_path(path: &str) -> String {
             character => result.push(character),
         }
     }
+
     result.push('"');
+
     return result;
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::process::Command;
-
     use super::unified;
     use crate::Result;
+    use std::fs;
+    use std::process::Command;
 
     #[test]
     #[expect(
@@ -123,7 +131,9 @@ mod tests {
             );
             assert_eq!(fs::read_to_string(source)?, after);
         }
+
         directory.close()?;
+
         return Ok(());
     }
 }

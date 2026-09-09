@@ -1,12 +1,10 @@
-use std::fs;
-use std::io::{self, Write as _};
-use std::path::Path;
-
-use serde_json::Value;
-
 #[cfg(unix)]
 use crate::transaction::atomic_json;
 use crate::{Options, Result};
+use serde_json::Value;
+use std::fs;
+use std::io::{self, Write as _};
+use std::path::Path;
 
 pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, mut code: u8) -> u8 {
     if let Some(path) = &options.report {
@@ -17,18 +15,22 @@ pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, m
             {
                 fs::create_dir_all(parent)?;
             }
+
             return write_report(path, report);
         })();
+
         if let Err(error) = result {
             let _ = writeln!(io::stderr(), "could not write report: {error}");
             code = 2;
         }
     }
+
     if options.json {
         match serde_json::to_string_pretty(report) {
             Ok(report) => println!("{report}"),
             Err(error) => {
                 let _ = writeln!(io::stderr(), "could not serialize report: {error}");
+
                 return 2;
             }
         }
@@ -46,22 +48,27 @@ pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, m
                 );
             }
         }
+
         if let Some(error) = report["error"].as_str() {
             let _ = writeln!(io::stderr(), "{error}");
         }
+
         if let Some(diff) = report["diff"].as_str() {
             print!("{diff}");
         }
+
         if status == "would-fix" {
             let count = report["proposed_files"].as_array().map_or(0, Vec::len);
             println!("  {count} file(s) would change; source files were not written");
         }
+
         if matches!(status, "passed" | "fixed") {
             let count = report["changed_files"].as_array().map_or(0, Vec::len);
             println!(
                 "  {count} file(s) changed; formatter: {}",
                 toolchain.unwrap_or("None")
             );
+
             if let Some(skipped) = report["skipped_boundaries"]
                 .as_u64()
                 .filter(|count| return *count != 0)
@@ -70,6 +77,7 @@ pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, m
             }
         }
     }
+
     return code;
 }
 

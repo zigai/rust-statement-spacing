@@ -3,6 +3,7 @@ use rust_statement_spacing_core::{ByteRange, ItemKind, UnitKind};
 
 pub(crate) fn range(node: &SyntaxNode) -> ByteRange {
     let range = node.text_range();
+
     return ByteRange::new(
         u32::from(range.start()) as usize,
         u32::from(range.end()) as usize,
@@ -17,28 +18,34 @@ pub(crate) fn code_range(node: &SyntaxNode) -> ByteRange {
         && let Some(expression) = statement.expr()
     {
         result.start = code_range(expression.syntax()).start;
+
         return result;
     }
+
     for child in node.children_with_tokens() {
         if let Some(node) = child.as_node()
             && node.kind() == SyntaxKind::ATTR
         {
             continue;
         }
+
         if let Some(token) = child.as_token()
             && matches!(token.kind(), SyntaxKind::WHITESPACE | SyntaxKind::COMMENT)
         {
             continue;
         }
+
         result.start = u32::from(child.text_range().start()) as usize;
         break;
     }
+
     return result;
 }
 
 pub(crate) fn is_expression(node: &SyntaxNode) -> bool {
     return ast::Expr::can_cast(node.kind());
 }
+
 pub(crate) fn is_item(node: &SyntaxNode) -> bool {
     return ast::Item::can_cast(node.kind());
 }
@@ -90,10 +97,13 @@ pub(crate) fn unit_kind(node: &SyntaxNode) -> UnitKind {
     if is_item(node) {
         return UnitKind::Item(item_kind(node));
     }
+
     if node.kind() == SyntaxKind::LET_STMT {
         return UnitKind::Let;
     }
+
     let expression = expression_node(node);
+
     match expression.kind() {
         SyntaxKind::IF_EXPR
         | SyntaxKind::FOR_EXPR
@@ -124,6 +134,7 @@ pub(crate) fn unit_kind(node: &SyntaxNode) -> UnitKind {
                         "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
                     );
                 });
+
             if assignment {
                 return UnitKind::Assignment;
             } else {
@@ -141,7 +152,9 @@ pub(crate) fn deferred_ranges(node: &SyntaxNode) -> Vec<ByteRange> {
             if child == node {
                 return false;
             }
+
             let k = child.kind();
+
             return k == SyntaxKind::CLOSURE_EXPR
                 || k == SyntaxKind::FN
                 || (k == SyntaxKind::BLOCK_EXPR
@@ -168,6 +181,7 @@ pub(crate) fn control_body_start(expression: &SyntaxNode) -> Option<usize> {
             .find(|node| return node.kind() == SyntaxKind::MATCH_ARM_LIST),
         _ => None,
     };
+
     return body.map(|body| return range(&body).start);
 }
 
@@ -179,16 +193,19 @@ fn direct_operation_range(unit: &SyntaxNode) -> ByteRange {
     } else {
         control_body_start(&expression).unwrap_or_else(|| return range(unit).end)
     };
+
     return ByteRange::new(code_range(unit).start, end);
 }
 
 pub(crate) fn immediate_body_first(expression: &SyntaxNode) -> Vec<ByteRange> {
     let mut result = Vec::new();
     let body_start = control_body_start(expression);
+
     for child in expression.children() {
         if body_start.is_some_and(|start| return range(&child).start < start) {
             continue;
         }
+
         if child.kind() == SyntaxKind::BLOCK_EXPR {
             if let Some(list) = child
                 .children()
@@ -220,6 +237,7 @@ pub(crate) fn immediate_body_first(expression: &SyntaxNode) -> Vec<ByteRange> {
             }
         }
     }
+
     return result;
 }
 
@@ -233,6 +251,7 @@ pub(crate) fn guard(expression: &SyntaxNode) -> bool {
     if expression.kind() != SyntaxKind::IF_EXPR {
         return false;
     }
+
     let body_start = control_body_start(expression);
     let blocks: Vec<_> = expression
         .children()
@@ -241,9 +260,11 @@ pub(crate) fn guard(expression: &SyntaxNode) -> bool {
                 && body_start.is_some_and(|start| return range(n).start >= start);
         })
         .collect();
+
     if blocks.len() != 1 {
         return false;
     }
+
     if expression
         .children_with_tokens()
         .filter_map(|n| return n.into_token())
@@ -251,6 +272,7 @@ pub(crate) fn guard(expression: &SyntaxNode) -> bool {
     {
         return false;
     }
+
     let Some(first_block) = blocks.first() else {
         return false;
     };
@@ -260,6 +282,7 @@ pub(crate) fn guard(expression: &SyntaxNode) -> bool {
     else {
         return false;
     };
+
     let units: Vec<_> = list.children().filter(is_unit).collect();
     if !(1..=2).contains(&units.len()) {
         return false;

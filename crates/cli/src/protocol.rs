@@ -1,12 +1,10 @@
+use crate::workspace::{assert_no_symlink, relative_path, safe_relative};
+use crate::{Result, failure};
+use serde_json::{Value, json};
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use serde_json::{Value, json};
-
-use crate::workspace::{assert_no_symlink, relative_path, safe_relative};
-use crate::{Result, failure};
 
 pub(crate) const MAX_JSON_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -68,6 +66,7 @@ fn suggestions<'doc>(node: &'doc Value, proposals: &mut Vec<&'doc Value>) {
             }
         }
     }
+
     if let Some(children) = node.get("children").and_then(Value::as_array) {
         for child in children {
             suggestions(child, proposals);
@@ -82,6 +81,7 @@ pub(crate) fn collect_edits(
     if lines.len() as u64 > MAX_JSON_BYTES {
         return Err(failure("Cargo JSON output exceeds the verification limit"));
     }
+
     let mut findings = BTreeMap::<FindingKey, Value>::new();
     let mut edits = BTreeMap::<(String, usize, usize), Edit>::new();
     let mut errors = Vec::new();
@@ -101,6 +101,7 @@ pub(crate) fn collect_edits(
         } else {
             continue;
         };
+
         let rule = diagnostic
             .get("code")
             .and_then(|code| return code.get("code"))
@@ -115,21 +116,26 @@ pub(crate) fn collect_edits(
                     .get("message")
                     .and_then(Value::as_str)
                     .unwrap_or("compiler error");
+
                 if !message.starts_with("aborting due to")
                     && !message.starts_with("For more information")
                 {
                     errors.push(message.to_owned());
                 }
             }
+
             continue;
         }
+
         // The pinned Cargo compiler runs from the workspace root. Diagnostic
         // file names are relative to that directory, not to the package ID.
         let resolve_name = |name: &str| -> Result<(PathBuf, String)> {
             return relative_path(root, Path::new(name));
         };
+
         let mut proposals = Vec::new();
         suggestions(diagnostic, &mut proposals);
+
         let primary = diagnostic
             .get("spans")
             .and_then(Value::as_array)
@@ -138,13 +144,16 @@ pub(crate) fn collect_edits(
                     return span.get("is_primary").and_then(Value::as_bool) == Some(true);
                 });
             });
+
         let mut file = primary
             .and_then(|span| return span.get("file_name"))
             .cloned()
             .unwrap_or(Value::Null);
+
         if let Some(name) = file.as_str().filter(|name| return !name.is_empty()) {
             file = Value::String(resolve_name(name)?.1);
         }
+
         let position = |field| {
             return primary
                 .and_then(|span| return span.get(field))
@@ -185,6 +194,7 @@ pub(crate) fn collect_edits(
         if proposals.len() != 1 {
             continue;
         }
+
         let Some(&proposal) = proposals.first() else {
             continue;
         };
@@ -192,6 +202,7 @@ pub(crate) fn collect_edits(
             .get("file_name")
             .and_then(Value::as_str)
             .ok_or_else(|| return failure("invalid suggestion file name"))?;
+
         let (path, relative) = resolve_name(name)?;
         assert_no_symlink(root, &path)?;
         if !relative.ends_with(".rs") {
@@ -199,6 +210,7 @@ pub(crate) fn collect_edits(
                 "a statement_spacing suggestion targeted a non-Rust file: {relative}"
             )));
         }
+
         let data = fs::read(path)?;
         let range = proposal
             .get("byte_start")
@@ -207,11 +219,13 @@ pub(crate) fn collect_edits(
             .and_then(|(start, end)| {
                 return Some((usize::try_from(start).ok()?, usize::try_from(end).ok()?));
             });
+
         let (start, end) = range
             .filter(|&(start, end)| return start <= end && end <= data.len())
             .ok_or_else(|| {
                 return failure(format!("invalid suggestion byte range in {relative}"));
             })?;
+
         let Some(slice) = data.get(start..end) else {
             return Err(failure(format!(
                 "invalid suggestion byte range in {relative}"
@@ -233,6 +247,7 @@ pub(crate) fn collect_edits(
                 "non-whitespace suggestion was rejected in {relative}"
             )));
         }
+
         let key = (relative.clone(), start, end);
         if let Some(previous) = edits.get(&key)
             && (previous.before != before || previous.after != after)
@@ -241,6 +256,7 @@ pub(crate) fn collect_edits(
                 "conflicting target-specific suggestions in {relative}"
             )));
         }
+
         edits.insert(
             key,
             Edit {
@@ -253,6 +269,7 @@ pub(crate) fn collect_edits(
             },
         );
     }
+
     let ordered: Vec<_> = edits.into_values().collect();
     for pair in ordered.windows(2) {
         let [previous, current] = pair else {
@@ -267,6 +284,7 @@ pub(crate) fn collect_edits(
             )));
         }
     }
+
     return Ok((findings.into_values().collect(), ordered, errors));
 }
 
@@ -275,6 +293,7 @@ pub(crate) fn apply(root: &Path, edits: &[Edit]) -> Result<()> {
     for edit in edits {
         grouped.entry(&edit.relative).or_default().push(edit);
     }
+
     for (name, mut group) in grouped {
         let path = root.join(safe_relative(name)?);
         assert_no_symlink(root, &path)?;
@@ -284,9 +303,12 @@ pub(crate) fn apply(root: &Path, edits: &[Edit]) -> Result<()> {
             if data.get(edit.start..edit.end) != Some(edit.before.as_slice()) {
                 return Err(failure(format!("stale suggestion in {name}")));
             }
+
             data.splice(edit.start..edit.end, edit.after.iter().copied());
         }
+
         fs::write(path, data)?;
     }
+
     return Ok(());
 }

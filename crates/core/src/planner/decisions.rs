@@ -19,12 +19,15 @@ pub(super) fn blocked(list: &UnitList, i: usize) -> bool {
     let Some(gap) = list.gaps.get(i) else {
         return true;
     };
+
     let Some(unit) = list.units.get(i) else {
         return true;
     };
+
     let Some(next_unit) = list.units.get(i + 1) else {
         return true;
     };
+
     return gap.protected
         || unit.protected
         || next_unit.protected
@@ -45,6 +48,7 @@ pub(super) fn put(
     if blocked(list, i) || !enabled(global_rules, next_unit, decision.rule) {
         return false;
     }
+
     let Some(slot) = decisions.get_mut(i) else {
         return false;
     };
@@ -54,7 +58,9 @@ pub(super) fn put(
     {
         return false;
     }
+
     *slot = Some(decision);
+
     return true;
 }
 
@@ -81,6 +87,7 @@ pub(super) fn join(rule: Rule, message: &'static str) -> Decision {
 pub(super) fn optional_join(rule: Rule) -> Decision {
     let mut decision = join(rule, "remove this separator within a cohesive phase");
     decision.priority = 20;
+
     return decision;
 }
 

@@ -1,4 +1,14 @@
 #![cfg_attr(windows, allow(unsafe_code))]
+use crate::cargo::check_interrupted;
+use crate::workspace::{
+    FileState, Snapshot, assert_no_symlink, assert_snapshot, digest, read_regular, safe_relative,
+};
+use crate::{Result, failure};
+#[cfg(unix)]
+use rustix::fs::{FlockOperation, Mode, OFlags, flock, open, openat};
+#[cfg(unix)]
+use rustix::io::Errno;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{self, DirBuilder, File};
 use std::io::{self, Write};
@@ -11,25 +21,15 @@ use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
-use rustix::fs::{FlockOperation, Mode, OFlags, flock, open, openat};
-#[cfg(unix)]
-use rustix::io::Errno;
-use serde_json::{Value, json};
-
-use crate::cargo::check_interrupted;
-use crate::workspace::{
-    FileState, Snapshot, assert_no_symlink, assert_snapshot, digest, read_regular, safe_relative,
-};
-use crate::{Result, failure};
-
-#[cfg(unix)]
 fn fsync_dir(directory: &Path) -> Result<()> {
     let descriptor = open(
         directory,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
     )?;
+
     File::from(descriptor).sync_all()?;
+
     return Ok(());
 }
 
@@ -43,9 +43,11 @@ fn atomic_bytes(path: &Path, data: &[u8], mode: u32) -> Result<()> {
         .parent()
         .filter(|parent| return !parent.as_os_str().is_empty())
         .unwrap_or_else(|| return Path::new("."));
+
     let mut temporary = tempfile::Builder::new()
         .prefix(".statement-spacing-tmp-")
         .tempfile_in(parent)?;
+
     #[cfg(unix)]
     temporary
         .as_file()
@@ -58,12 +60,14 @@ fn atomic_bytes(path: &Path, data: &[u8], mode: u32) -> Result<()> {
     temporary
         .persist(path)
         .map_err(|error| return error.error)?;
+
     return fsync_dir(parent);
 }
 
 pub(crate) fn atomic_json(path: &Path, value: &Value) -> Result<()> {
     let mut bytes = serde_json::to_vec_pretty(value)?;
     bytes.push(b'\n');
+
     return atomic_bytes(path, &bytes, 0o600);
 }
 
@@ -101,18 +105,21 @@ pub(crate) fn workspace_lock(root: &Path) -> Result<WorkspaceLock> {
     if state.is_symlink() {
         return Err(failure(".statement-spacing must not be a symlink"));
     }
+
     private_directory(&state)?;
     let directory = open(
         &state,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
     )?;
+
     let descriptor = openat(
         &directory,
         "lock",
         OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::from_raw_mode(0o600),
     )?;
+
     match flock(&descriptor, FlockOperation::NonBlockingLockExclusive) {
         Ok(()) => {
             return Ok(WorkspaceLock {
@@ -210,20 +217,24 @@ fn rollback(root: &Path, journal_dir: &Path) -> Result<Vec<String>> {
     {
         return Err(failure("unsupported or malformed recovery journal"));
     }
+
     let entries = journal
         .get("files")
         .and_then(Value::as_array)
         .ok_or_else(|| return failure("unsupported or malformed recovery journal"))?;
+
     let mut conflicts = Vec::new();
     for entry in entries {
         let name = journal_text(entry, "path")?;
         let relative = safe_relative(name)?;
         let destination = root.join(&relative);
         assert_no_symlink(root, &destination)?;
+
         let backup = journal_dir.join(safe_relative(journal_text(entry, "backup")?)?);
         if backup.is_symlink() {
             return Err(failure("refusing a symlinked transaction backup"));
         }
+
         assert_no_symlink(journal_dir, &backup)?;
         let data = read_regular(&backup)?;
         let before = journal_text(entry, "before")?;
@@ -234,12 +245,14 @@ fn rollback(root: &Path, journal_dir: &Path) -> Result<Vec<String>> {
             .and_then(|mode| return u32::try_from(mode).ok())
             .filter(|mode| return *mode <= 0o7777)
             .ok_or_else(|| return failure("unsupported or malformed recovery journal"))?;
+
         if digest(&data) != before {
             return Err(failure(format!(
                 "corrupt recovery backup for {}",
                 relative.display()
             )));
         }
+
         let current = if destination.is_file() {
             Some(digest(&read_regular(&destination)?))
         } else {
@@ -248,12 +261,15 @@ fn rollback(root: &Path, journal_dir: &Path) -> Result<Vec<String>> {
         if current.as_deref() == Some(before) {
             continue;
         }
+
         if current.as_deref() != Some(after) {
             conflicts.push(name.to_owned());
             continue;
         }
+
         atomic_bytes(&destination, &data, mode)?;
     }
+
     if conflicts.is_empty() {
         fs::remove_dir_all(journal_dir)?;
         fsync_dir(
@@ -262,6 +278,7 @@ fn rollback(root: &Path, journal_dir: &Path) -> Result<Vec<String>> {
                 .ok_or_else(|| return failure("journal has no parent directory"))?,
         )?;
     }
+
     return Ok(conflicts);
 }
 
@@ -270,14 +287,17 @@ pub(crate) fn recover(root: &Path) -> Result<Vec<String>> {
     if transactions.is_symlink() {
         return Err(failure("transaction directory must not be a symlink"));
     }
+
     if !transactions.try_exists()? {
         return Ok(Vec::new());
     }
+
     assert_no_symlink(root, &transactions)?;
     let mut directories = fs::read_dir(&transactions)?
         .map(|entry| return entry.map(|entry| return entry.path()))
         .collect::<io::Result<Vec<_>>>()?;
     directories.sort();
+
     let mut restored = Vec::new();
     for directory in directories {
         if directory.is_symlink() || !directory.is_dir() {
@@ -286,6 +306,7 @@ pub(crate) fn recover(root: &Path) -> Result<Vec<String>> {
                 directory.display()
             )));
         }
+
         let journal_path = directory.join("journal.json");
         if !journal_path.try_exists()? {
             return Err(failure(format!(
@@ -293,12 +314,15 @@ pub(crate) fn recover(root: &Path) -> Result<Vec<String>> {
                 directory.display()
             )));
         }
+
         let journal = read_journal(&directory)?;
         if journal.get("phase").and_then(Value::as_str) == Some("complete") {
             fs::remove_dir_all(&directory)?;
             fsync_dir(&transactions)?;
+
             continue;
         }
+
         let conflicts = rollback(root, &directory)?;
         if !conflicts.is_empty() {
             return Err(failure(format!(
@@ -307,6 +331,7 @@ pub(crate) fn recover(root: &Path) -> Result<Vec<String>> {
                 directory.display()
             )));
         }
+
         restored.push(
             directory
                 .file_name()
@@ -315,6 +340,7 @@ pub(crate) fn recover(root: &Path) -> Result<Vec<String>> {
                 .to_owned(),
         );
     }
+
     return Ok(restored);
 }
 
@@ -334,6 +360,7 @@ pub(crate) fn commit(
                 "verified mode only commits existing Rust source files: {name}"
             )));
         }
+
         let path = root.join(safe_relative(name)?);
         assert_no_symlink(root, &path)?;
         #[cfg(unix)]
@@ -346,10 +373,12 @@ pub(crate) fn commit(
             )));
         }
     }
+
     let transactions = root.join(".statement-spacing/transactions");
     if transactions.is_symlink() {
         return Err(failure("transaction directory must not be a symlink"));
     }
+
     assert_no_symlink(root, &transactions)?;
     private_directory(&transactions)?;
     if fs::read_dir(&transactions)?.next().transpose()?.is_some() {
@@ -357,11 +386,13 @@ pub(crate) fn commit(
             "an unfinished transaction exists; run cargo statement-spacing recover first",
         ));
     }
+
     let journal_dir: PathBuf = tempfile::Builder::new()
         .prefix("")
         .rand_bytes(12)
         .tempdir_in(&transactions)?
         .keep();
+
     let mut entries = Vec::with_capacity(changed.len());
     // Persist every backup and the prepared journal before replacing any source.
     let preparation = (|| -> Result<Value> {
@@ -374,6 +405,7 @@ pub(crate) fn commit(
             if before_hash != original[name].digest {
                 return Err(failure(format!("concurrent source modification: {name}")));
             }
+
             let backup_name = format!("{index:06}.original");
             atomic_bytes(&journal_dir.join(&backup_name), &before, 0o600)?;
             entries.push(json!({
@@ -381,6 +413,7 @@ pub(crate) fn commit(
                 "after": digest(data), "mode": original[name].mode,
             }));
         }
+
         let journal = json!({"schema": 1, "phase": "prepared", "files": entries});
         atomic_json(&journal_dir.join("journal.json"), &journal)?;
         fsync_dir(&transactions)?;
@@ -389,29 +422,38 @@ pub(crate) fn commit(
                 .parent()
                 .ok_or_else(|| return failure("transaction directory has no parent"))?,
         )?;
+
         return Ok(journal);
     })();
+
     let mut journal = match preparation {
         Ok(journal) => journal,
         Err(error) => {
             fs::remove_dir_all(&journal_dir)?;
             fsync_dir(&transactions)?;
+
             return Err(error);
         }
     };
+
     let result = (|| -> Result<()> {
         for entry in &entries {
             check_interrupted()?;
+
             let name = journal_text(entry, "path")?;
             let path = root.join(name);
             assert_no_symlink(root, &path)?;
             if digest(&read_regular(&path)?) != journal_text(entry, "before")? {
                 return Err(failure(format!("source changed at commit time: {name}")));
             }
+
             atomic_bytes(&path, &changed[name], original[name].mode)?;
         }
+
         check_interrupted()?;
+
         final_check()?;
+
         let mut expected = original.clone();
         for (name, data) in changed {
             expected.insert(
@@ -424,14 +466,19 @@ pub(crate) fn commit(
                 },
             );
         }
+
         assert_snapshot(root, &expected, limit, exclusions)?;
         check_interrupted()?;
+
         if let Some(map) = journal.as_object_mut() {
             map.insert("phase".into(), Value::from("complete"));
         }
+
         atomic_json(&journal_dir.join("journal.json"), &journal)?;
+
         return Ok(());
     })();
+
     if let Err(error) = result {
         match rollback(root, &journal_dir) {
             Err(rollback_error) => {
@@ -449,6 +496,8 @@ pub(crate) fn commit(
             Ok(_) => return Err(error),
         }
     }
+
     fs::remove_dir_all(&journal_dir)?;
+
     return fsync_dir(&transactions);
 }

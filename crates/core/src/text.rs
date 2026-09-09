@@ -19,12 +19,15 @@ impl SourceText {
     pub fn new(raw: String) -> Self {
         let bytes = raw.as_bytes();
         let mut i = if raw.starts_with('\u{feff}') { 3 } else { 0 };
+
         let mut map = Vec::with_capacity(bytes.len() + 1);
         let mut saw_crlf = false;
         let mut saw_lf = false;
         while i < bytes.len() {
             map.push(i);
+
             let byte = bytes.get(i).copied();
+
             if byte == Some(b'\r') && bytes.get(i + 1) == Some(&b'\n') {
                 i += 2;
                 saw_crlf = true;
@@ -33,11 +36,14 @@ impl SourceText {
                 i += 1;
             }
         }
+
         map.push(bytes.len());
+
         let normalized = raw
             .strip_prefix('\u{feff}')
             .unwrap_or(&raw)
             .replace("\r\n", "\n");
+
         return Self {
             raw,
             normalized,

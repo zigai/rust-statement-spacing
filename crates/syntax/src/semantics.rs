@@ -1,6 +1,5 @@
-use std::collections::BTreeSet;
-
 use rust_statement_spacing_core::{ByteRange, Facts, Place, RuleMask};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 /// Compiler-resolved operation contributing to a unit relationship.
@@ -91,6 +90,7 @@ impl SemanticIndex {
                         .any(|body| return body.contains(event.range));
             })
             .collect();
+
         let mut facts = Facts {
             known: !opaque
                 && !events
@@ -98,6 +98,7 @@ impl SemanticIndex {
                     .any(|event| return event.kind == EventKind::Unknown),
             ..Facts::default()
         };
+
         if !deferred.is_empty() {
             let locals: BTreeSet<_> = self
                 .events
@@ -115,6 +116,7 @@ impl SemanticIndex {
                         .map(|place| return place.local.as_str());
                 })
                 .collect();
+
             facts.captures = self
                 .events
                 .iter()
@@ -129,16 +131,20 @@ impl SemanticIndex {
                 .cloned()
                 .collect();
         }
+
         for event in &events {
             if let EventKind::DirectCallee(callee) = &event.kind {
                 if event.range.start == range.start && range.end - event.range.end <= 1 {
                     facts.direct_callees.insert(callee.clone());
                 }
+
                 continue;
             }
+
             let Some(place) = &event.place else {
                 continue;
             };
+
             match &event.kind {
                 EventKind::Define => {
                     if declaration.is_some_and(|pat| return pat.contains(event.range)) {
@@ -157,12 +163,14 @@ impl SemanticIndex {
                                     && p.projections.len() > place.projections.len();
                             });
                     });
+
                     if !incidental {
                         facts.reads.insert(place.clone());
                         facts.whole_body_reads.insert(place.clone());
                         if header.is_some_and(|h| return h.contains(event.range)) {
                             facts.header_reads.insert(place.clone());
                         }
+
                         if first_body.iter().any(|b| return b.contains(event.range)) {
                             facts.first_body_reads.insert(place.clone());
                         }
@@ -191,6 +199,7 @@ impl SemanticIndex {
                 EventKind::Unknown | EventKind::DirectCallee(_) => {}
             }
         }
+
         return facts;
     }
 
