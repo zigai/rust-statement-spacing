@@ -212,6 +212,47 @@ def main():
                     run(base + ["check", *arguments], fixture, expected=(1,))
                     (fixture / "dylint.toml").write_text("[statement_spacing]\n")
 
+                    # Audit regressions use the visual normalization preferences.
+                    audit = (ROOT / "tests/fixtures/audit.rs").read_bytes()
+                    source.write_bytes(audit)
+                    (fixture / "dylint.toml").write_text(
+                        '[statement_spacing.grouping]\n'
+                        'bindings="multiline"\nexpressions="multiline"\n'
+                        'self_fields="distinct"\njoin_related=true\n'
+                        '[statement_spacing.control_flow]\n'
+                        'guard_chain="contextual"\nrelated_continuation=false\n'
+                        '[statement_spacing.exits]\ntail="visual"\n'
+                    )
+                    run(base + ["check", *arguments], fixture)
+                    for candidate in (
+                        audit.replace(b'"#;\n\nconst', b'"#;\nconst')
+                        .replace(b"\n\n    let mut masks", b"\n    let mut masks")
+                        .replace(b"\n\n    fs::remove_file", b"\n    fs::remove_file"),
+                        audit.replace(b"    let mut health", b"\n    let mut health")
+                        .replace(b"    let mut last_dash", b"\n    let mut last_dash")
+                        .replace(b"    for clip", b"\n    for clip")
+                        .replace(b"    if !status", b"\n    if !status")
+                        .replace(b"        if names", b"\n        if names")
+                        .replace(b"        if (product", b"\n        if (product")
+                        .replace(b"    let hex", b"\n    let hex")
+                        .replace(b"    let value = entry", b"\n    let value = entry")
+                        .replace(b"    validate_name(name)", b"\n    validate_name(name)")
+                        .replace(b"    if sim.golden", b"\n    if sim.golden")
+                        .replace(b"    dirty |= ui", b"\n    dirty |= ui")
+                        .replace(b"    assert!(verify", b"\n    assert!(verify")
+                        .replace(b"    b.push", b"\n    b.push")
+                        .replace(b"    let mut enabled", b"\n    let mut enabled")
+                        .replace(b"    assert!(enabled", b"\n    assert!(enabled")
+                        .replace(b"    assert!(!enabled", b"\n    assert!(!enabled"),
+                    ):
+                        source.write_bytes(candidate)
+                        run(base + ["fix", *arguments], fixture)
+                        assert source.read_bytes() == audit, "audit grouping regression"
+                        run(base + ["check", *arguments], fixture)
+                        run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
+                    source.write_bytes(grouped)
+                    (fixture / "dylint.toml").write_text("[statement_spacing]\n")
+
                     # Suppression and expectation operate at actual compiler nodes.
                     for attribute in ("allow", "expect"):
                         source.write_text(
