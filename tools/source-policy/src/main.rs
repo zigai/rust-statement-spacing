@@ -1,10 +1,9 @@
 //! Repository stub policy uses Rust tokens, including those in macro definitions.
 
+use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxKind};
 use std::error::Error;
 use std::fs;
 use std::path::Path;
-
-use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxKind};
 
 fn stub_calls(source: &str) -> Vec<usize> {
     let parse = SourceFile::parse(source, Edition::Edition2024);
@@ -17,12 +16,14 @@ fn stub_calls(source: &str) -> Vec<usize> {
             return !matches!(token.kind(), SyntaxKind::WHITESPACE | SyntaxKind::COMMENT);
         })
         .collect();
+
     return tokens
         .windows(3)
         .filter(|tokens| {
             let [t0, t1, t2] = tokens else {
                 return false;
             };
+
             return t0.kind() == SyntaxKind::IDENT
                 && matches!(t0.text().trim_start_matches("r#"), "todo" | "unimplemented")
                 && t1.kind() == SyntaxKind::BANG
@@ -35,6 +36,7 @@ fn stub_calls(source: &str) -> Vec<usize> {
             let [t0, ..] = tokens else {
                 return None;
             };
+
             return Some(u32::from(t0.text_range().start()) as usize);
         })
         .collect();
@@ -43,6 +45,7 @@ fn stub_calls(source: &str) -> Vec<usize> {
 fn scan(root: &Path) -> Result<Vec<String>, Box<dyn Error>> {
     let mut directories = vec![root.to_path_buf()];
     let mut violations = Vec::new();
+
     // Match the source-tree boundary of scripts/static_checks.py. Do not follow
     // symlinks into other projects, or inspect generated build/cache output.
     while let Some(directory) = directories.pop() {
@@ -57,6 +60,7 @@ fn scan(root: &Path) -> Result<Vec<String>, Box<dyn Error>> {
             ) {
                 continue;
             }
+
             let kind = entry.file_type()?;
             let path = entry.path();
             #[expect(
@@ -64,6 +68,7 @@ fn scan(root: &Path) -> Result<Vec<String>, Box<dyn Error>> {
                 reason = "Source policy scanner requires regular Rust source files and excludes symlinks, fifos, and devices"
             )]
             let is_regular_file = kind.is_file();
+
             if kind.is_dir() {
                 directories.push(path);
             } else if is_regular_file
@@ -72,6 +77,7 @@ fn scan(root: &Path) -> Result<Vec<String>, Box<dyn Error>> {
                     .is_some_and(|extension| return extension == "rs")
             {
                 let source = fs::read_to_string(&path)?;
+
                 for offset in stub_calls(&source) {
                     violations.push(format!(
                         "{}:byte {offset}",
@@ -81,7 +87,9 @@ fn scan(root: &Path) -> Result<Vec<String>, Box<dyn Error>> {
             }
         }
     }
+
     violations.sort();
+
     return Ok(violations);
 }
 
@@ -90,11 +98,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         .parent()
         .and_then(Path::parent)
         .ok_or("source-policy must be inside the repository tools directory")?;
+
     let violations = scan(root)?;
     if !violations.is_empty() {
         return Err(format!("unfinished stubs: {violations:#?}").into());
     }
+
     println!("source policy passed");
+
     return Ok(());
 }
 
