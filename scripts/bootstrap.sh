@@ -8,7 +8,8 @@ python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ is req
 rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy
 rustup toolchain install nightly-2026-05-28 --profile minimal \
     --component rustc-dev --component llvm-tools-preview --component rustfmt
-cargo +nightly-2026-05-28 install cargo-dylint dylint-link --version '=6.0.4' --locked
+# CI caches can restore binaries without Cargo's installation tracking metadata.
+cargo +nightly-2026-05-28 install cargo-dylint dylint-link --version '=6.0.4' --locked --force
 (
     cd "$ROOT"
     cargo +1.96.0 generate-lockfile
