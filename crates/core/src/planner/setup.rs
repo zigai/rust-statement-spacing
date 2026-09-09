@@ -1,21 +1,25 @@
 //! Monotone setup-group splitting over the effective boundary layout.
 
 use super::decisions::{
-    Decision, blocked, effective_blank, enabled, mandatory_join, optional_join, put, separate,
+    Decision, blocked, effective_blank, enabled, join, mandatory_join, optional_join, put, separate,
 };
 use super::guard_pair;
 use super::visual;
 use crate::config::{Bindings, Config, Expressions, GuardChain, Overflow, UseIn};
 use crate::model::{Form, Rule, RuleMask, UnitKind, UnitList};
-use crate::relations::{control_inputs, intersects, outputs};
+use crate::relations::{Relationship, control_inputs, intersects, outputs, relationship};
 
 pub(super) fn apply(
     config: &Config,
+    source: &str,
     global_rules: RuleMask,
     list: &UnitList,
     cohesive: &[bool],
     decisions: &mut [Option<Decision>],
 ) {
+    attach_preparation(config, source, global_rules, list, decisions);
+    attach_accumulators(config, source, global_rules, list, decisions);
+
     // Monotone closure: optional joins can strengthen into required separators.
     // Reconsider affected groups before exposing edits, not on a later fix pass.
     for _ in 0..=list.gaps.len() {
@@ -24,10 +28,12 @@ pub(super) fn apply(
             let Some(unit) = list.units.get(control) else {
                 continue;
             };
+
             let gap = control - 1;
             let Some(gap_unit) = list.units.get(gap) else {
                 continue;
             };
+
             if unit.kind != UnitKind::Control
                 || !gap_unit.kind.ordinary()
                 || !enabled(global_rules, unit, Rule::ControlFlow)
@@ -38,6 +44,7 @@ pub(super) fn apply(
             {
                 continue;
             }
+
             if config.control_flow.compact_cleanup
                 && config.grouping.expressions != Expressions::Strict
                 && unit.is_empty_loop
@@ -47,6 +54,7 @@ pub(super) fn apply(
             {
                 continue;
             }
+
             if config.control_flow.guard_chain == GuardChain::Contextual
                 && config.grouping.expressions != Expressions::Strict
                 && config.grouping.max_before_control > 0
@@ -68,8 +76,10 @@ pub(super) fn apply(
                         separate(Rule::ControlFlow, 90, "separate these validation stages"),
                     );
                 }
+
                 continue;
             }
+
             if config.grouping.bindings == Bindings::Multiline && unit.shape.form == Form::Loop {
                 let mut start = gap;
                 while start > 0
@@ -83,6 +93,7 @@ pub(super) fn apply(
                 {
                     start -= 1;
                 }
+
                 if control - start > config.grouping.max_before_control
                     && list
                         .units
@@ -102,6 +113,7 @@ pub(super) fn apply(
                                 && unit.shape.form == Form::Literal;
                         })
                         .count();
+
                     let boundary = if config.grouping.max_before_control > 0
                         && gap_unit.shape.form == Form::Literal
                         && gap_unit.shape.mutable
@@ -111,6 +123,7 @@ pub(super) fn apply(
                     } else {
                         gap
                     };
+
                     changed |= put(
                         global_rules,
                         list,
@@ -125,6 +138,7 @@ pub(super) fn apply(
                     continue;
                 }
             }
+
             if !unit.facts.known
                 && unit.facts.writes.is_empty()
                 && unit.facts.mutating_receivers.is_empty()
@@ -132,6 +146,7 @@ pub(super) fn apply(
             {
                 continue;
             }
+
             let mut group_start = gap;
             while group_start > 0 {
                 let previous_gap = group_start - 1;
@@ -145,8 +160,10 @@ pub(super) fn apply(
                 {
                     break;
                 }
+
                 group_start -= 1;
             }
+
             let mut needed = control_inputs(&unit.facts, config.grouping.use_in);
             let mut accepted_start = control;
             let mut accumulator_start = control;
@@ -158,10 +175,12 @@ pub(super) fn apply(
                 if !setup.kind.ordinary() {
                     break;
                 }
+
                 if !setup.facts.known {
                     unknown = true;
                     break;
                 }
+
                 let mut provided = outputs(&setup.facts);
                 // Initializing state that the control body updates is setup even
                 // when the update is nested or follows another statement. Only
@@ -177,6 +196,7 @@ pub(super) fn apply(
                             &unit.facts.mutating_receivers,
                             config.grouping.self_fields,
                         ));
+
                 // A bounded suffix of fresh accumulators belongs to the loop
                 // that fills it, even when earlier bindings form a larger group.
                 // Mutation operations alone are not fresh initializations.
@@ -194,28 +214,34 @@ pub(super) fn apply(
                 {
                     accumulator_start = candidate;
                 }
+
                 if config.grouping.same_receiver {
                     // Receiver-centred setup is a grouping heuristic, not a
                     // claim that the called method mutates its receiver.
                     provided.extend(setup.facts.receivers.clone());
                 }
+
                 // Unknown effects cannot prove a read relationship, but do not
                 // invalidate an independently resolved non-deferred mutation.
                 if !unit.facts.known && !initializes_updated_state {
                     unknown = true;
                     break;
                 }
+
                 if !initializes_updated_state
                     && !intersects(&provided, &needed, config.grouping.self_fields)
                 {
                     break;
                 }
+
                 needed.extend(setup.facts.reads.clone());
                 accepted_start = candidate;
             }
+
             if unknown && accepted_start == control && config.grouping.max_before_control != 0 {
                 continue;
             }
+
             // A mandatory producer/check pair is indivisible, not an exemption
             // for every unrelated statement that happens to precede it.
             let mut atomic_start = control;
@@ -227,6 +253,7 @@ pub(super) fn apply(
             {
                 atomic_start -= 1;
             }
+
             let mandatory = control - atomic_start;
             let total = control - group_start;
             let related = control - accepted_start;
@@ -242,10 +269,12 @@ pub(super) fn apply(
                         } else {
                             accumulators.min(limit).max(mandatory)
                         };
+
                         if retained == 0 {
                             Some(gap)
                         } else {
                             let start = control - retained;
+
                             (start > group_start).then_some(start.saturating_sub(1))
                         }
                     } else {
@@ -258,10 +287,12 @@ pub(super) fn apply(
                         Some(gap)
                     } else {
                         let start = control - accepted;
+
                         (start > group_start).then(|| return start - 1)
                     }
                 }
             };
+
             if config.grouping.join_related
                 && config.grouping.bindings != Bindings::Preserve
                 && config.grouping.expressions != Expressions::Preserve
@@ -279,6 +310,7 @@ pub(super) fn apply(
                     optional_join(Rule::ControlFlow),
                 );
             }
+
             if let Some(mut boundary) = boundary {
                 // Expand the retained suffix backwards to the start of a
                 // joined component; never split a mandatory pair in its middle.
@@ -290,6 +322,7 @@ pub(super) fn apply(
                 {
                     boundary -= 1;
                 }
+
                 if decisions
                     .get(boundary)
                     .and_then(|d| return d.as_ref())
@@ -297,6 +330,7 @@ pub(super) fn apply(
                 {
                     continue;
                 }
+
                 let mut decision = separate(
                     Rule::ControlFlow,
                     90,
@@ -308,6 +342,176 @@ pub(super) fn apply(
         }
         if !changed {
             break;
+        }
+    }
+}
+
+fn attach_preparation(
+    config: &Config,
+    source: &str,
+    global_rules: RuleMask,
+    list: &UnitList,
+    decisions: &mut [Option<Decision>],
+) {
+    if config.grouping.overflow != Overflow::WholeGroup
+        || config.grouping.max_before_control == 0
+        || config.grouping.bindings == Bindings::Preserve
+        || matches!(
+            config.grouping.expressions,
+            Expressions::Strict | Expressions::Preserve
+        )
+    {
+        return;
+    }
+
+    for (control, unit) in list.units.iter().enumerate() {
+        if unit.kind != UnitKind::Control || control < 2 {
+            continue;
+        }
+
+        let mut start = control - 1;
+        while start > 0 {
+            let gap = start - 1;
+            let (Some(a), Some(b)) = (list.units.get(gap), list.units.get(start)) else {
+                break;
+            };
+            if blocked(list, gap)
+                || list.gaps.get(gap).is_none_or(|gap| {
+                    return !gap.joinable || (!config.grouping.join_related && gap.blank_lines > 0);
+                })
+                || ![a, b].iter().all(|binding| {
+                    return binding.kind == UnitKind::Let
+                        && !matches!(
+                            binding.shape.form,
+                            Form::LetElse
+                                | Form::Branch
+                                | Form::Conditional
+                                | Form::Closure
+                                | Form::Macro
+                        )
+                        && source
+                            .get(binding.code_range.as_range())
+                            .is_some_and(|text| return !text.contains('\n'));
+                })
+                || relationship(&a.facts, &b.facts, &config.grouping) != Relationship::Related
+            {
+                break;
+            }
+
+            start = gap;
+        }
+
+        if control - start > 4 {
+            continue;
+        }
+
+        for gap in start..control - 1 {
+            put(
+                global_rules,
+                list,
+                decisions,
+                gap,
+                join(Rule::Bindings, "keep this compact preparation chain intact"),
+            );
+        }
+    }
+}
+
+fn attach_accumulators(
+    config: &Config,
+    source: &str,
+    global_rules: RuleMask,
+    list: &UnitList,
+    decisions: &mut [Option<Decision>],
+) {
+    if config.grouping.max_before_control == 0
+        || config.grouping.use_in == UseIn::Header
+        || config.grouping.bindings == Bindings::Preserve
+        || matches!(
+            config.grouping.expressions,
+            Expressions::Strict | Expressions::Preserve
+        )
+    {
+        return;
+    }
+
+    for (control, unit) in list.units.iter().enumerate() {
+        if unit.kind != UnitKind::Control {
+            continue;
+        }
+
+        let mut start = control;
+        while start > 0 {
+            let candidate = start - 1;
+            let Some(setup) = list.units.get(candidate) else {
+                break;
+            };
+            if blocked(list, candidate)
+                || list.gaps.get(candidate).is_none_or(|gap| {
+                    return !gap.joinable || (!config.grouping.join_related && gap.blank_lines > 0);
+                })
+                || setup.kind != UnitKind::Let
+                || !setup.shape.mutable
+                || !setup.facts.known
+                || !matches!(
+                    setup.shape.form,
+                    Form::Literal | Form::Value | Form::Call | Form::Method
+                )
+                || source
+                    .get(setup.code_range.as_range())
+                    .is_none_or(|text| return text.contains('\n'))
+                || !(intersects(
+                    &setup.facts.definitions,
+                    &unit.facts.writes,
+                    config.grouping.self_fields,
+                ) || intersects(
+                    &setup.facts.definitions,
+                    &unit.facts.mutating_receivers,
+                    config.grouping.self_fields,
+                ))
+            {
+                break;
+            }
+
+            start = candidate;
+        }
+
+        // Treat up to four compact initializations as one population step.
+        // Larger setup phases continue to obey the ordinary overflow policy.
+        if start == control || control - start > 4 {
+            continue;
+        }
+
+        for gap in start..control {
+            put(
+                global_rules,
+                list,
+                decisions,
+                gap,
+                join(
+                    Rule::ControlFlow,
+                    "keep fresh accumulators with the control flow that fills them",
+                ),
+            );
+        }
+
+        if start > 0
+            && list
+                .units
+                .get(start - 1)
+                .is_some_and(|unit| return unit.kind.is_binding())
+        {
+            put(
+                global_rules,
+                list,
+                decisions,
+                start - 1,
+                separate(
+                    Rule::ControlFlow,
+                    90,
+                    "separate earlier preparation from fresh accumulators",
+                ),
+            );
         }
     }
 }

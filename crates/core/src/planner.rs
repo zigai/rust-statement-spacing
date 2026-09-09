@@ -3,6 +3,7 @@
 use crate::config::{Config, GuardChain};
 use crate::edits::{Edit, blank_line_replacement, validate_edits};
 use crate::model::{ByteRange, Rule, RuleMask, SourceModel, Unit, UnitList};
+
 mod decisions;
 mod groups;
 mod local;
@@ -67,8 +68,16 @@ fn build_decisions(
         &mut decisions,
     );
     local::normalize(config, source, global_rules, list, &mut decisions);
-    setup::apply(config, global_rules, list, &cohesive, &mut decisions);
+    setup::apply(
+        config,
+        source,
+        global_rules,
+        list,
+        &cohesive,
+        &mut decisions,
+    );
     local::cap_blank_lines(global_rules, list, &mut decisions);
+
     return decisions;
 }
 
@@ -80,28 +89,34 @@ fn build_decisions(
 pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, String> {
     config.validate()?;
     let global_rules = config.enabled();
+
     let mut result = Plan::default();
     for list in &model.lists {
         if list.gaps.len() != list.units.len().saturating_sub(1) {
             return Err("invalid source model: gap/unit count mismatch".into());
         }
+
         let decisions = build_decisions(config, source, global_rules, list);
         for (i, decision) in decisions.iter().enumerate() {
             if blocked(list, i) {
                 result.skipped_boundaries += 1;
             }
+
             let Some(decision) = decision else {
                 continue;
             };
+
             let Some(gap) = list.gaps.get(i) else {
                 continue;
             };
             if gap.blank_lines == decision.blanks {
                 continue;
             }
+
             let old = source
                 .get(gap.range.as_range())
                 .ok_or_else(|| return "invalid gap range".to_string())?;
+
             let edit = if gap.vertical {
                 blank_line_replacement(old, decision.blanks).map(|replacement| {
                     return Edit {
@@ -124,6 +139,7 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
                 edit,
             });
         }
+
         // The policy on the resulting gap model must be stable, independently of
         // offsets. The source-adapter tests also reparse and check actual edits.
         let mut fixed_model = list.clone();
@@ -134,7 +150,9 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
                 gap.blank_lines = decision.blanks;
             }
         }
+
         let second = build_decisions(config, source, global_rules, &fixed_model);
+
         for (i, decision) in second.iter().enumerate() {
             if let Some(decision) = decision
                 && let Some(gap) = fixed_model.gaps.get(i)
@@ -144,6 +162,7 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
             }
         }
     }
+
     if global_rules.has(Rule::Layout) {
         for (range, anchor) in &model.layout_edges {
             let old = source
@@ -152,6 +171,7 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
             if old.matches('\n').count() <= 1 {
                 continue;
             }
+
             if let Some(replacement) = blank_line_replacement(old, 0) {
                 result.findings.push(Finding {
                     rule: Rule::Layout,
@@ -168,10 +188,12 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
             }
         }
     }
+
     result
         .findings
         .sort_by_key(|f| return (f.range.start, f.range.end, f.rule));
     // Validate the whole set, including insertions shared by nested source lists.
     validate_edits(source, &result.edits())?;
+
     return Ok(result);
 }

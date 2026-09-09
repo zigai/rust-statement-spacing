@@ -1,10 +1,8 @@
 //! The public configuration schema. Unknown keys and unimplemented modes are errors.
 
-use std::collections::BTreeSet;
-
-use serde::{Deserialize, Serialize};
-
 use crate::model::{Rule, RuleMask};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 macro_rules! option_enum {
     ($(#[$meta:meta])* $name:ident, $default:ident, $($(#[$variant_meta:meta])* $variant:ident => $text:literal),+ $(,)?) => {
@@ -163,6 +161,8 @@ pub struct Grouping {
     /// `self` projection matching; defaults to the same receiver root.
     pub self_fields: SelfFields,
     /// Maximum ordinary setup units attached to control flow; defaults to 1.
+    /// Up to four compact mutable initializations updated by the body form one
+    /// accumulator step. Zero disables that exception as well as ordinary setup.
     pub max_before_control: usize,
     /// How excess setup is split; defaults to preserving the whole group.
     pub overflow: Overflow,
@@ -278,6 +278,7 @@ impl Config {
         if self.schema_version != 1 {
             return Err("statement_spacing.schema_version must be 1".into());
         }
+
         for (name, value) in [
             ("max_before_control", self.grouping.max_before_control),
             (
@@ -291,6 +292,7 @@ impl Config {
                 ));
             }
         }
+
         for (name, rules) in [("enable", &self.enable), ("disable", &self.disable)] {
             if rules.iter().copied().collect::<BTreeSet<_>>().len() != rules.len() {
                 return Err(format!(
@@ -298,11 +300,13 @@ impl Config {
                 ));
             }
         }
+
         for rule in &self.enable {
             if self.disable.contains(rule) {
                 return Err(format!("{} is both enabled and disabled", rule.name()));
             }
         }
+
         return Ok(());
     }
 
@@ -312,15 +316,18 @@ impl Config {
         for rule in &self.enable {
             mask = mask.with(*rule);
         }
+
         for rule in &self.disable {
             mask = mask.without(*rule);
         }
+
         return mask;
     }
 
     /// Creates a configuration with only the specified rules enabled.
     pub fn only(rules: &[Rule]) -> Self {
         let default_rules = RuleMask::all().without(Rule::Layout);
+
         let mut enable = Vec::new();
         let mut disable = Vec::new();
         for rule in Rule::ALL {
@@ -332,6 +339,7 @@ impl Config {
                 disable.push(rule);
             }
         }
+
         return Self {
             enable,
             disable,

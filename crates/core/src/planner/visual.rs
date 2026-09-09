@@ -9,23 +9,48 @@ pub(super) fn assertion_boundary(config: &Config, list: &UnitList, index: usize)
     let a = list.units.get(index)?;
     let b = list.units.get(index + 1)?;
     let count = a.shape.test_statements?;
+
     if !a.kind.ordinary() || !b.kind.ordinary() {
         return None;
     }
+
     if a.shape.role == StatementRole::Assertion && b.shape.role == StatementRole::Assertion {
         return Some(false);
     }
+
     if b.shape.role == StatementRole::Assertion {
         let operation_check = a.kind == UnitKind::Let
             && a.shape.role != StatementRole::Extraction
-            && matches!(a.shape.form, Form::Call | Form::Method)
+            && matches!(
+                a.shape.form,
+                Form::Call | Form::Method | Form::Value | Form::Literal
+            )
             && intersects(
                 &a.facts.definitions,
                 &b.facts.reads,
                 config.grouping.self_fields,
             );
-        return Some(count > config.exits.short_block_max_statements && !operation_check);
+
+        let scenario_check = mutation_check(config, a, b)
+            || (call_check(config, a, b)
+                && list
+                    .units
+                    .windows(2)
+                    .filter(|pair| {
+                        let [action, check] = pair else {
+                            return false;
+                        };
+
+                        return call_check(config, action, check);
+                    })
+                    .count()
+                    > 1);
+
+        return Some(
+            count > config.exits.short_block_max_statements && !operation_check && !scenario_check,
+        );
     }
+
     if a.shape.role == StatementRole::Assertion {
         let verification = b.shape.role == StatementRole::FunctionCall
             && index
@@ -45,11 +70,13 @@ pub(super) fn assertion_boundary(config: &Config, list: &UnitList, index: usize)
                             config.grouping.self_fields,
                         );
                 });
+
         if verification {
             return Some(false);
         }
         return Some(count > config.exits.short_block_max_statements);
     }
+
     if b.shape.role == StatementRole::Extraction
         && list
             .units
@@ -63,7 +90,65 @@ pub(super) fn assertion_boundary(config: &Config, list: &UnitList, index: usize)
     {
         return Some(false);
     }
+
+    if fixture_preparation(config, list, index) {
+        return Some(false);
+    }
     return None;
+}
+
+fn mutation_check(config: &Config, action: &Unit, check: &Unit) -> bool {
+    return action.kind.ordinary()
+        && action.shape.role != StatementRole::Assertion
+        && check.shape.role == StatementRole::Assertion
+        && (intersects(
+            &action.facts.writes,
+            &check.facts.reads,
+            config.grouping.self_fields,
+        ) || intersects(
+            &action.facts.mutating_receivers,
+            &check.facts.reads,
+            config.grouping.self_fields,
+        ));
+}
+
+fn call_check(config: &Config, action: &Unit, check: &Unit) -> bool {
+    return action.kind == UnitKind::Expression
+        && action.shape.role == StatementRole::FunctionCall
+        && check.shape.role == StatementRole::Assertion
+        && intersects(
+            &action.facts.reads,
+            &check.facts.reads,
+            config.grouping.self_fields,
+        );
+}
+
+/// A short uninterrupted setup can prepare distinct fixtures for one check.
+fn fixture_preparation(config: &Config, list: &UnitList, index: usize) -> bool {
+    let following = list.units.iter().skip(index).take(5);
+    let Some(check) = following
+        .clone()
+        .find(|unit| return unit.shape.role == StatementRole::Assertion)
+    else {
+        return false;
+    };
+
+    return following
+        .take_while(|unit| return unit.shape.role != StatementRole::Assertion)
+        .all(|unit| {
+            return mutation_check(config, unit, check)
+                || (unit.kind == UnitKind::Let
+                    && !matches!(
+                        unit.shape.form,
+                        Form::Branch | Form::Conditional | Form::Closure | Form::LetElse
+                    )
+                    && unit.shape.role != StatementRole::Extraction
+                    && intersects(
+                        &unit.facts.definitions,
+                        &check.facts.reads,
+                        config.grouping.self_fields,
+                    ));
+        });
 }
 
 pub(super) fn validation_stages(list: &UnitList) -> bool {
@@ -114,6 +199,7 @@ fn mutation(unit: &Unit) -> bool {
 
 fn resource_pair(config: &Config, a: &Unit, b: &Unit) -> bool {
     let settings = config.grouping.self_fields;
+
     return (a.shape.form == Form::Method
         && b.shape.form == Form::Method
         && intersects(&a.facts.receivers, &b.facts.receivers, settings))
@@ -168,6 +254,7 @@ pub(super) fn related_join(config: &Config, source: &str, a: &Unit, b: &Unit) ->
     let short_b = source
         .get(b.code_range.as_range())
         .is_some_and(|text| return !text.contains('\n'));
+
     return (producer
         && (a.shape.form == Form::LetElse
             || a.shape.form == Form::Closure
@@ -182,6 +269,21 @@ pub(super) fn related_join(config: &Config, source: &str, a: &Unit, b: &Unit) ->
                         && source
                             .get(b.code_range.as_range())
                             .is_some_and(|text| return text.lines().count() <= 2))))))
+        || (short_a
+            && short_b
+            && a.kind.is_binding()
+            && b.kind.is_binding()
+            && relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Related)
+        || (short_a
+            && short_b
+            && a.kind == UnitKind::Expression
+            && b.kind == UnitKind::Expression
+            && a.shape.role == StatementRole::FunctionCall
+            && b.shape.role == StatementRole::FunctionCall
+            && a.shape.fallible
+            && b.shape.fallible
+            && !a.facts.direct_callees.is_empty()
+            && !b.facts.direct_callees.is_empty())
         || (a.kind.is_binding()
             && b.kind.is_binding()
             && a.shape.error_handler.is_some()
@@ -207,6 +309,7 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     let (Some(a), Some(b)) = (list.units.get(index), list.units.get(index + 1)) else {
         return false;
     };
+
     let text = |unit: &Unit| return source.get(unit.code_range.as_range()).unwrap_or("");
     let multiline = text(a).contains('\n');
     // A shared mutable input does not collapse selection, construction, and
@@ -222,17 +325,21 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return true;
     }
+
     if config.grouping.join_related && related_join(config, source, a, b) {
         return false;
     }
+
     let producer = intersects(
         &a.facts.definitions,
         &b.facts.reads,
         config.grouping.self_fields,
     );
+
     if a.shape.form == Form::LetElse && producer {
         return false;
     }
+
     if a.shape.error_handler.is_some()
         && a.shape.error_handler == b.shape.error_handler
         && (producer
@@ -245,6 +352,7 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return false;
     }
+
     if producer
         && ((a.shape.form == Form::Value && b.kind.is_binding())
             || a.shape.form == Form::Closure
@@ -252,6 +360,7 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return false;
     }
+
     if a.shape.mutable
         && (intersects(
             &a.facts.definitions,
@@ -265,6 +374,7 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return false;
     }
+
     if b.kind.ordinary()
         && (intersects(&a.facts.writes, &b.facts.reads, config.grouping.self_fields)
             || intersects(
@@ -275,9 +385,11 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return false;
     }
+
     if sandwiched(config, list, index) || sandwiched(config, list, index + 1) {
         return false;
     }
+
     if list.scope == Scope::Loop
         && b.is_guard
         && (list.executable_count <= 4
@@ -290,6 +402,7 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return false;
     }
+
     if a.kind == UnitKind::Expression
         && b.kind == UnitKind::Control
         && intersects(
@@ -300,12 +413,15 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return false;
     }
+
     if producer && !text(b).contains('\n') && text(a).lines().count() <= 2 && b.kind.is_binding() {
         return false;
     }
+
     if producer && mutation(b) {
         return false;
     }
+
     if producer
         && b.kind.is_binding()
         && b.shape.error_handler.is_some()
@@ -313,18 +429,22 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return false;
     }
+
     if producer && a.facts.definitions.len() > 1 && b.kind.is_binding() && !text(b).contains('\n') {
         return false;
     }
+
     if a.kind == UnitKind::Assignment
         && !mutation(b)
         && intersects(&a.facts.reads, &b.facts.reads, config.grouping.self_fields)
     {
         return false;
     }
+
     if multiline {
         return true;
     }
+
     if a.kind == UnitKind::Let
         && b.kind == UnitKind::Control
         && !b.shape.exiting_guard
@@ -333,6 +453,7 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return true;
     }
+
     if a.kind.is_binding()
         && b.kind == UnitKind::Expression
         && !producer
@@ -352,10 +473,12 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
     {
         return true;
     }
+
     if a.kind == UnitKind::Expression && b.kind == UnitKind::Let {
         if same_string(source, a, b) {
             return false;
         }
+
         if !mutation(a)
             && !matches!(b.shape.form, Form::Branch | Form::Conditional)
             && index > 0
@@ -374,6 +497,7 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
         {
             return false;
         }
+
         if !mutation(a)
             && (intersects(&a.facts.reads, &b.facts.reads, config.grouping.self_fields)
                 || (!a.facts.reads.is_empty()
@@ -385,6 +509,7 @@ pub(super) fn boundary(config: &Config, source: &str, list: &UnitList, index: us
         }
         return !producer;
     }
+
     if a.kind == UnitKind::Expression && b.kind == UnitKind::Expression {
         return relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Unrelated;
     }

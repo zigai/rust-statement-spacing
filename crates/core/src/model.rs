@@ -1,9 +1,8 @@
 //! Source units, compiler facts, and rule identifiers.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::ops::Range;
-
-use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,22 +75,27 @@ impl RuleMask {
     pub const fn all() -> Self {
         return Self(0xff);
     }
+
     /// Disables every check.
     pub const fn none() -> Self {
         return Self(0);
     }
+
     /// Tests whether this check is enabled.
     pub const fn has(self, rule: Rule) -> bool {
         return self.0 & (1 << rule as u8) != 0;
     }
+
     /// Returns a copy with the given check enabled.
     pub const fn with(self, rule: Rule) -> Self {
         return Self(self.0 | (1 << rule as u8));
     }
+
     /// Returns a copy with the given check disabled.
     pub const fn without(self, rule: Rule) -> Self {
         return Self(self.0 & !(1 << rule as u8));
     }
+
     /// Keeps only checks enabled in both masks.
     pub const fn intersect(self, other: Self) -> Self {
         return Self(self.0 & other.0);
@@ -112,14 +116,17 @@ impl ByteRange {
     pub const fn new(start: usize, end: usize) -> Self {
         return Self { start, end };
     }
+
     /// Tests whether both bounds of the other range lie within this range.
     pub const fn contains(self, other: Self) -> bool {
         return self.start <= other.start && other.end <= self.end;
     }
+
     /// Tests whether the ranges have intersecting interiors.
     pub const fn overlaps(self, other: Self) -> bool {
         return self.start < other.end && other.start < self.end;
     }
+
     /// Returns the equivalent standard half-open range.
     pub fn as_range(self) -> Range<usize> {
         return self.start..self.end;
@@ -226,14 +233,17 @@ impl UnitKind {
     pub fn is_binding(self) -> bool {
         return matches!(self, Self::Let | Self::Assignment);
     }
+
     /// Whether this unit is an item declaration.
     pub fn is_item(self) -> bool {
         return matches!(self, Self::Item(_));
     }
+
     /// Whether this is a standalone control-flow or scope block.
     pub fn ends_block(self) -> bool {
         return matches!(self, Self::Control | Self::Block | Self::UnsafeBlock);
     }
+
     /// Whether ordinary binding/expression grouping applies.
     pub fn ordinary(self) -> bool {
         return matches!(self, Self::Let | Self::Assignment | Self::Expression);
@@ -303,6 +313,9 @@ pub struct Shape {
     pub exiting_guard: bool,
     /// Ranges of immediate string inputs, excluding deferred bodies.
     pub string_inputs: Vec<ByteRange>,
+    /// Sole method-call statement in an if body without an else arm.
+    #[serde(default)]
+    pub conditional_action: Option<ByteRange>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

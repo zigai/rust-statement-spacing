@@ -1,12 +1,11 @@
+use crate::units::{
+    control_body_start, deferred_ranges, expression_node, is_expression, is_item, is_unit, range,
+};
 use ra_ap_syntax::{
     AstNode, SyntaxKind, SyntaxNode,
     ast::{self, HasArgList as _},
 };
 use rust_statement_spacing_core::{ByteRange, Form, Scope, Shape, StatementRole};
-
-use crate::units::{
-    control_body_start, deferred_ranges, expression_node, is_expression, is_item, is_unit, range,
-};
 
 fn unwrapped(mut node: SyntaxNode) -> SyntaxNode {
     while matches!(
@@ -18,6 +17,7 @@ fn unwrapped(mut node: SyntaxNode) -> SyntaxNode {
         };
         node = inner;
     }
+
     return node;
 }
 
@@ -28,6 +28,7 @@ fn terminal(node: SyntaxNode) -> SyntaxNode {
     {
         return terminal(body);
     }
+
     if node.kind() == SyntaxKind::BLOCK_EXPR
         && let Some(last) = node
             .children()
@@ -52,6 +53,7 @@ fn error_sink(node: SyntaxNode) -> Option<String> {
             .and_then(|n| return n.children().find(|n| return n.kind() == SyntaxKind::PATH)),
         _ => None,
     };
+
     return path.map(|path| return path.text().to_string());
 }
 
@@ -67,6 +69,7 @@ fn handler(mut node: SyntaxNode) -> Option<String> {
                 .and_then(|args| return args.args().last())
                 .and_then(|arg| return error_sink(arg.syntax().clone()));
         }
+
         let receiver = call.receiver()?;
         node = receiver.syntax().clone();
     }
@@ -76,9 +79,11 @@ fn assertion(node: &SyntaxNode) -> bool {
     let call = ast::MacroCall::cast(node.clone()).or_else(|| {
         return node.children().find_map(ast::MacroCall::cast);
     });
+
     let Some(path) = call.and_then(|call| return call.path()) else {
         return false;
     };
+
     return matches!(
         path.syntax().text().to_string().as_str(),
         "assert"
@@ -106,6 +111,7 @@ fn extraction(node: &SyntaxNode) -> bool {
             let Some(call) = ast::MethodCallExpr::cast(node.clone()) else {
                 return false;
             };
+
             return call.name_ref().is_some_and(|name| {
                 return matches!(name.text().as_str(), "unwrap" | "expect");
             }) && call.receiver().is_some_and(|receiver| {
@@ -124,6 +130,7 @@ pub(crate) fn test_statements(container: &SyntaxNode) -> Option<usize> {
     let function = container
         .ancestors()
         .find(|node| return node.kind() == SyntaxKind::FN)?;
+
     let test = function
         .children()
         .filter(|node| return node.kind() == SyntaxKind::ATTR)
@@ -132,12 +139,14 @@ pub(crate) fn test_statements(container: &SyntaxNode) -> Option<usize> {
                 .descendants_with_tokens()
                 .filter_map(|element| return element.into_token())
                 .filter(|token| return !token.kind().is_trivia());
+
             return ["#", "[", "test", "]"].iter().all(|expected| {
                 return tokens
                     .next()
                     .is_some_and(|token| return token.text() == *expected);
             }) && tokens.next().is_none();
         });
+
     if !test {
         return None;
     }
@@ -168,6 +177,7 @@ pub(crate) fn shape(node: &SyntaxNode) -> Shape {
             || return expression.clone(),
             |expr| return expr.syntax().clone(),
         );
+
     let deferred = deferred_ranges(&initializer);
     let root = unwrapped(initializer.clone());
     let form = if node
@@ -206,6 +216,7 @@ pub(crate) fn shape(node: &SyntaxNode) -> Shape {
             _ => Form::Other,
         }
     };
+
     let exiting_guard = expression.kind() == SyntaxKind::IF_EXPR
         && expression
             .children()
@@ -225,7 +236,27 @@ pub(crate) fn shape(node: &SyntaxNode) -> Shape {
                     SyntaxKind::RETURN_EXPR | SyntaxKind::BREAK_EXPR | SyntaxKind::CONTINUE_EXPR
                 );
             });
+
     return Shape {
+        conditional_action: ast::IfExpr::cast(expression).and_then(|conditional| {
+            if conditional.else_branch().is_some()
+                || conditional.condition()?.syntax().descendants().any(|node| {
+                    return node.kind() == SyntaxKind::LET_EXPR;
+                })
+            {
+                return None;
+            }
+
+            let body = conditional.then_branch()?.stmt_list()?;
+            let mut statements = body.syntax().children().filter(is_unit);
+            let statement = statements.next()?;
+            if statements.next().is_some()
+                || expression_node(&statement).kind() != SyntaxKind::METHOD_CALL_EXPR
+            {
+                return None;
+            }
+            return Some(range(&statement));
+        }),
         form,
         role: if binding.is_none() && form == Form::Macro && assertion(&root) {
             StatementRole::Assertion
