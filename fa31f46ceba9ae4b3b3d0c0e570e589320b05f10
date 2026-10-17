@@ -1,0 +1,3 @@
+- Runs cargo statement-spacing check in ~/Projects/pace with ~/.cargo/config.toml present; it now checks the workspace instead of refusing
+- Runs it in a probe workspace under ~/.cache with its own parent .cargo/config.toml; it is still rejected with exit 2
+- Runs the CLI crate tests (8 pass) and Clippy (no warnings)
