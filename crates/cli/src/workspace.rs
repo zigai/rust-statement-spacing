@@ -578,6 +578,14 @@ pub(crate) fn copy_snapshot(
 }
 
 pub(crate) fn reject_ancestor_config(root: &Path) -> Result<()> {
+    // Cargo reads $CARGO_HOME/config.toml for every workspace, so the verified copy inherits it too.
+    let cargo_home = env::var_os("CARGO_HOME")
+        .filter(|path| return !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            return env::var_os("HOME").map(|home| return PathBuf::from(home).join(".cargo"));
+        })
+        .and_then(|path| return fs::canonicalize(path).ok());
     for parent in root.ancestors().skip(1) {
         for name in [
             "rustfmt.toml",
@@ -586,7 +594,10 @@ pub(crate) fn reject_ancestor_config(root: &Path) -> Result<()> {
             ".cargo/config.toml",
         ] {
             let candidate = parent.join(name);
-            if candidate.exists() {
+            let in_cargo_home = name.starts_with(".cargo/")
+                && cargo_home.is_some()
+                && fs::canonicalize(parent.join(".cargo")).ok() == cargo_home;
+            if candidate.exists() && !in_cargo_home {
                 return Err(failure(format!(
                     "inherited configuration outside workspace is not relocatable: {}. Put this configuration in the workspace before using verified mode.",
                     candidate.display()
