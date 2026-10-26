@@ -11,44 +11,11 @@ setup:
   cargo fetch
   pre-commit install
 
-# Make a current stable toolchain available for compiling repository tools
-_stable-tools:
-  rustup toolchain install stable --profile minimal
-
-# Install cargo-nextest
-install-nextest: _stable-tools
-  cargo +stable install --locked cargo-nextest
-
-# Install cargo-llvm-cov and its rustup component
-install-coverage-tool: _stable-tools
-  rustup component add llvm-tools-preview
-  cargo +stable install --locked cargo-llvm-cov
-
-# Install cargo-deny
-install-deny-tool: _stable-tools
-  cargo +stable install --locked cargo-deny
-
-# Install typos-cli
-install-spell-tool: _stable-tools
-  cargo +stable install --locked typos-cli
-
-# Install cargo-hack
-install-feature-tool: _stable-tools
-  cargo +stable install --locked cargo-hack
-
-
-# Install all optional repository tools
-install-tools: install-nextest install-coverage-tool install-deny-tool install-spell-tool install-feature-tool
-
 # Format all Rust targets
 format:
   cargo fmt --all
   cargo +stable fmt --manifest-path lint/Cargo.toml
   cargo +stable fmt --manifest-path fuzz/Cargo.toml
-
-# Compile every workspace target and feature
-check-code:
-  cargo check --workspace --all-targets --all-features
 
 # Run Clippy with warnings treated as errors
 lint:
@@ -59,15 +26,9 @@ fix:
   cargo clippy --workspace --all-targets --all-features --fix --allow-dirty --allow-staged
 
 # Pass Cargo and libtest arguments after the recipe name, for example: just test -- --nocapture
-# Run unit, integration, and documentation tests
-test *args:
-  cargo test --workspace --all-features {{args}}
-
-# Nextest does not run documentation tests; check-all runs them separately for library crates.
 # Run unit and integration tests with cargo-nextest
-nextest *args:
+test *args:
   cargo nextest run --workspace --all-features {{args}}
-
 # Run only rustdoc examples
 doctest:
   cargo test --workspace --all-features --doc
@@ -79,10 +40,6 @@ features:
 # Generate an HTML source coverage report
 coverage:
   cargo llvm-cov --workspace --all-features --html
-
-# Generate an LCOV coverage file
-coverage-lcov:
-  cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 
 # Build a debug version
 build:
@@ -111,23 +68,15 @@ deny:
 spell:
   typos
 
-
 # Remove Cargo build artifacts
 clean:
   cargo clean
 
-# Run the built-in non-mutating quality gate
-check: check-code lint test test-driver static-check docs-check
+# Run the complete quality gate
+check: lint test doctest test-driver static-check features docs-check deny spell
   cargo fmt --all -- --check
   cargo +stable fmt --manifest-path lint/Cargo.toml -- --check
   cargo +stable fmt --manifest-path fuzz/Cargo.toml -- --check
-
-# Run the broader tool-assisted quality gate
-check-all: check-code lint nextest doctest test-driver static-check features docs-check deny spell
-  cargo fmt --all -- --check
-  cargo +stable fmt --manifest-path lint/Cargo.toml -- --check
-  cargo +stable fmt --manifest-path fuzz/Cargo.toml -- --check
-
 # List available commands
 help:
   @just --list
