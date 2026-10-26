@@ -82,7 +82,7 @@ class WorkspaceTest(unittest.TestCase):
         )
         self.start, self.end = SOURCE.index(b";") + 1, SOURCE.index(b"std::")
 
-    def invoke(self, command="fix", scenario="normal", extra=(), diagnostics=None):
+    def invoke(self, command="fix", scenario="normal", extra=(), diagnostics=None, git_env=None):
         env = os.environ.copy()
         env.update(
             PYTHON=sys.executable,
@@ -94,6 +94,8 @@ class WorkspaceTest(unittest.TestCase):
         if diagnostics is not None:
             env["STATEMENT_SPACING_FAKE_DIAGNOSTICS"] = diagnostics
         env.pop("RUSTFMT", None)
+        if git_env is not None:
+            env.update(git_env)
         process = subprocess.run(
             [
                 str(BINARY),
@@ -170,7 +172,6 @@ class PreviewAndBaselineTests(WorkspaceTest):
         prefix = b"// unrelated addition\n"
         self.source.write_bytes(prefix + SOURCE)
         items = [diagnostic("src/lib.rs", self.start + len(prefix), self.end + len(prefix), rule="statement_spacing_bindings")]
-        # Capture the double's original wording so only location changes.
         code, original_report = self.invoke("check")
         items[0]["message"]["message"] = original_report["findings"][0]["message"]
         code, report = self.invoke("check", extra=("--baseline", str(baseline)), diagnostics="\n".join(map(json.dumps, items)))
@@ -367,6 +368,144 @@ class EditTests(WorkspaceTest):
 
 
 class SnapshotTests(WorkspaceTest):
+    def git_environment(self, config):
+        return dict(
+            GIT_CONFIG_NOSYSTEM="1",
+            GIT_CONFIG_GLOBAL=str(config / "gitconfig"),
+            XDG_CONFIG_HOME=str(config),
+        )
+
+    def initialize_git(self, env):
+        subprocess.run(
+            ["git", "init", "--quiet", str(self.root)],
+            env=dict(os.environ, **env), capture_output=True, check=True,
+        )
+
+    def test_global_excludes_skip_directory_links_and_invalid_manifests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            (config / "git").mkdir()
+            (config / "git/ignore").write_text(".assistant\n")
+            env = self.git_environment(config)
+            ignored = self.root / ".assistant"
+            ignored.mkdir()
+            try:
+                (ignored / "commands").symlink_to("../src", target_is_directory=True)
+            except OSError:
+                self.skipTest("directory symlinks unavailable")
+            code, report = self.invoke(git_env=env)
+            self.assertEqual(code, 0, report)
+            self.assertEqual(self.source.read_bytes(), FIXED)
+            (ignored / "Cargo.toml").write_text("invalid manifest")
+            self.source.write_bytes(SOURCE)
+            code, report = self.invoke(git_env=env)
+            self.assertEqual(code, 0, report)
+            self.assertEqual((ignored / "Cargo.toml").read_text(), "invalid manifest")
+
+    def test_configured_excludes_resolve_repository_config_and_tilde_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            env = self.git_environment(config)
+            env["HOME"] = str(config)
+            self.initialize_git(env)
+            (config / "excludes").write_text("/generated/\n")
+            with (self.root / ".git/config").open("a") as stream:
+                stream.write("\n[core]\nexcludesFile = ~/excludes\n")
+            (self.root / "generated").mkdir()
+            (self.root / "generated/Cargo.toml").write_text("invalid manifest")
+            code, report = self.invoke(git_env=env)
+            self.assertEqual(code, 0, report)
+            self.assertEqual(self.source.read_bytes(), FIXED)
+
+    def test_info_excludes_are_preserved_when_replica_has_no_git_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            env = self.git_environment(config)
+            self.initialize_git(env)
+            (self.root / ".git").rename(config / "metadata")
+            (self.root / ".git").write_text(f"gitdir: {config / 'metadata'}\n")
+            (config / "metadata/info/exclude").write_text("/generated/\n")
+            (self.root / "generated").mkdir()
+            (self.root / "generated/Cargo.toml").write_text("invalid manifest")
+            self.source.write_bytes(FIXED)
+            code, report = self.invoke(git_env=env)
+            self.assertEqual(code, 0, report)
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(self.source.read_bytes(), FIXED)
+
+    def test_external_ignore_precedence_is_retained_in_replica(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            env = self.git_environment(config)
+            self.initialize_git(env)
+            (config / "git").mkdir()
+            (config / "git/ignore").write_text("*.txt\n!blocked.txt\n")
+            (self.root / ".git/info/exclude").write_text("!info.txt\nblocked.txt\n")
+            (self.root / ".gitignore").write_text("!root.txt\nroot-blocked.txt\n")
+            (self.root / "nested").mkdir()
+            (self.root / "nested/.gitignore").write_text("!child.txt\n")
+            for name in ("global.txt", "info.txt", "root.txt", "blocked.txt", "root-blocked.txt", "nested/child.txt"):
+                (self.root / name).write_text(name)
+            self.source.write_bytes(FIXED)
+            included = [
+                "Cargo.toml", "Cargo.lock", "src/lib.rs", ".gitignore",
+                "nested/.gitignore", "info.txt", "root.txt", "nested/child.txt",
+            ]
+            expected = {
+                name: hashlib.sha256((self.root / name).read_bytes()).hexdigest()
+                for name in included
+            }
+            fingerprint = hashlib.sha256(json.dumps(expected, sort_keys=True).encode()).hexdigest()
+            code, report = self.invoke(git_env=env)
+            self.assertEqual(code, 0, report)
+            self.assertEqual(report["source_fingerprint"], fingerprint)
+
+    def test_external_excludes_are_anchored_at_git_root_for_nested_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            env = self.git_environment(config)
+            self.initialize_git(env)
+            repository = self.root
+            workspace = repository / "workspace"
+            workspace.mkdir()
+            for name in ("Cargo.toml", "Cargo.lock", "src"):
+                (repository / name).rename(workspace / name)
+            self.root = workspace
+            self.source = workspace / "src/lib.rs"
+            (config / "git").mkdir()
+            (config / "git/ignore").write_text("/workspace/global/\n")
+            (repository / ".git/info/exclude").write_text("/workspace/info/\n")
+            (repository / ".gitignore").write_text("/workspace/ancestor/\n")
+            for name in ("global", "info", "ancestor"):
+                (workspace / name).mkdir()
+                (workspace / name / "Cargo.toml").write_text("invalid manifest")
+            code, report = self.invoke(git_env=env)
+            self.assertEqual(code, 0, report)
+            self.assertEqual(self.source.read_bytes(), FIXED)
+            (repository / "excludes").write_text("/workspace/global/\n/workspace/configured/\n")
+            with (repository / ".git/config").open("a") as stream:
+                stream.write("\n[core]\nexcludesFile = excludes\n")
+            (workspace / "configured").mkdir()
+            (workspace / "configured/Cargo.toml").write_text("invalid manifest")
+            self.source.write_bytes(SOURCE)
+            code, report = self.invoke(git_env=env)
+            self.assertEqual(code, 0, report)
+            self.assertEqual(self.source.read_bytes(), FIXED)
+
+    def test_links_cannot_bypass_external_excludes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            env = self.git_environment(config)
+            (config / "git").mkdir()
+            (config / "git/ignore").write_text("private.txt\n")
+            (self.root / "private.txt").write_text("excluded")
+            try:
+                (self.root / "alias").symlink_to("private.txt")
+            except OSError:
+                self.skipTest("file symlinks unavailable")
+            report = self.assert_rejected(git_env=env)
+            self.assertIn("symlink targets excluded path", report["error"])
+
     def test_nested_repository_ignores_match_in_snapshot_without_git_metadata(self):
         for marker_is_directory in (False, True):
             with self.subTest(marker_is_directory=marker_is_directory):

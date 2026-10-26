@@ -65,7 +65,8 @@ impl Driver {
         }
 
         workspace::reject_ancestor_config(&root)?;
-        workspace::validate_manifest_paths(&root, &exclusions)?;
+        let gitignores = workspace::GitIgnoreStack::external(&root)?;
+        workspace::validate_manifest_paths(&root, &exclusions, &gitignores)?;
         if !root.join("Cargo.lock").is_file() {
             return Err(failure(
                 "verified mode requires Cargo.lock; run cargo generate-lockfile first",
@@ -74,7 +75,7 @@ impl Driver {
 
         let identity = self.identity(&root)?;
         self.set_report("formatter", identity.clone());
-        let original = workspace::scan(&root, limit, &exclusions)?;
+        let original = workspace::scan(&root, limit, &exclusions, &gitignores)?;
         self.set_report("source_fingerprint", source_fingerprint(&original)?.into());
         if !self.options.format_first {
             self.fmt(&root, false)?;
@@ -85,7 +86,7 @@ impl Driver {
             .tempdir()?;
 
         let replica = temporary.path().join("workspace");
-        workspace::copy_snapshot(&root, &replica, &original, &exclusions)?;
+        workspace::copy_snapshot(&root, &replica, &original, &exclusions, &gitignores)?;
         let replica = workspace::canonical(&replica)?;
         let mut args = self.formatter_cargo();
         args.extend([
@@ -103,9 +104,9 @@ impl Driver {
             // Establish declaration groups before rustfmt sorts imports within
             // them. Otherwise removing blank lines destroys the group's order
             // before the whitespace-only lint can reconstruct its boundaries.
-            let before_layout = workspace::scan(&replica, limit, &exclusions)?;
+            let before_layout = workspace::scan(&replica, limit, &exclusions, &gitignores)?;
             let mut layout = self.lint(&replica, temporary.path(), "declarations", &root)?;
-            workspace::assert_snapshot(&replica, &before_layout, limit, &exclusions)?;
+            workspace::assert_snapshot(&replica, &before_layout, limit, &exclusions, &gitignores)?;
             layout
                 .edits
                 .retain(|edit| return edit.rule == "statement_spacing_item_spacing");
@@ -115,9 +116,9 @@ impl Driver {
             self.fmt(&replica, true)?;
         }
 
-        let before_lint = workspace::scan(&replica, limit, &exclusions)?;
+        let before_lint = workspace::scan(&replica, limit, &exclusions, &gitignores)?;
         let mut first = self.lint(&replica, temporary.path(), "initial", &root)?;
-        workspace::assert_snapshot(&replica, &before_lint, limit, &exclusions)?;
+        workspace::assert_snapshot(&replica, &before_lint, limit, &exclusions, &gitignores)?;
 
         let mut features: Vec<_> = self
             .options
@@ -163,7 +164,7 @@ impl Driver {
         self.set_report("skipped_boundaries", json!(first.skipped_boundaries));
         cargo::check_interrupted()?;
         if self.options.command == "check" {
-            workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
+            workspace::assert_snapshot(&root, &original, limit, &exclusions, &gitignores)?;
             if let Some(path) = &self.options.write_baseline {
                 let document = baseline_document
                     .as_ref()
@@ -198,10 +199,10 @@ impl Driver {
         }
 
         protocol::apply(&replica, &first.edits)?;
-        let candidate = workspace::scan(&replica, limit, &exclusions)?;
+        let candidate = workspace::scan(&replica, limit, &exclusions, &gitignores)?;
         self.fmt(&replica, false)?;
         let second = self.lint(&replica, temporary.path(), "fixed", &root)?;
-        workspace::assert_snapshot(&replica, &candidate, limit, &exclusions)?;
+        workspace::assert_snapshot(&replica, &candidate, limit, &exclusions, &gitignores)?;
 
         if !second.findings.is_empty() || !second.edits.is_empty() {
             return Err(failure(
@@ -243,7 +244,7 @@ impl Driver {
         self.set_report("proposed_files", json!(changed.keys().collect::<Vec<_>>()));
         cargo::check_interrupted()?;
         if self.options.dry_run {
-            workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
+            workspace::assert_snapshot(&root, &original, limit, &exclusions, &gitignores)?;
             if self.identity(&root)? != identity {
                 return Err(failure("formatter identity changed during verification"));
             }
@@ -261,7 +262,7 @@ impl Driver {
                 self.set_report("diff", patch.into());
             }
 
-            workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
+            workspace::assert_snapshot(&root, &original, limit, &exclusions, &gitignores)?;
 
             self.set_report(
                 "status",
@@ -294,11 +295,19 @@ impl Driver {
         };
 
         if changed.is_empty() {
-            workspace::assert_snapshot(&root, &original, limit, &exclusions)?;
+            workspace::assert_snapshot(&root, &original, limit, &exclusions, &gitignores)?;
             let mut final_check = final_check;
             final_check()?;
         } else {
-            transaction::commit(&root, &original, &changed, final_check, limit, &exclusions)?;
+            transaction::commit(
+                &root,
+                &original,
+                &changed,
+                final_check,
+                limit,
+                &exclusions,
+                &gitignores,
+            )?;
         }
 
         self.set_report("changed_files", json!(changed.keys().collect::<Vec<_>>()));

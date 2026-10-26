@@ -1,7 +1,8 @@
 #![cfg_attr(windows, allow(unsafe_code))]
 use crate::cargo::check_interrupted;
 use crate::workspace::{
-    FileState, Snapshot, assert_no_symlink, assert_snapshot, digest, read_regular, safe_relative,
+    FileState, GitIgnoreStack, Snapshot, assert_no_symlink, assert_snapshot, digest, read_regular,
+    safe_relative,
 };
 use crate::{Result, failure};
 #[cfg(unix)]
@@ -351,9 +352,10 @@ pub(crate) fn commit(
     final_check: impl FnOnce() -> Result<()>,
     limit: u64,
     exclusions: &[PathBuf],
+    gitignores: &GitIgnoreStack,
 ) -> Result<()> {
     check_interrupted()?;
-    assert_snapshot(root, original, limit, exclusions)?;
+    assert_snapshot(root, original, limit, exclusions, gitignores)?;
     for name in changed.keys() {
         if !original.contains_key(name) || !name.ends_with(".rs") {
             return Err(failure(format!(
@@ -467,7 +469,7 @@ pub(crate) fn commit(
             );
         }
 
-        assert_snapshot(root, &expected, limit, exclusions)?;
+        assert_snapshot(root, &expected, limit, exclusions, gitignores)?;
         check_interrupted()?;
 
         if let Some(map) = journal.as_object_mut() {

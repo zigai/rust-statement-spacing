@@ -13,6 +13,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 #[cfg(windows)]
 use std::os::windows::fs::symlink_file;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 use std::str;
 
 const IGNORED_DIRS: [&str; 6] = [
@@ -118,9 +119,98 @@ impl GitIgnore {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct GitIgnoreStack {
     ignores: Vec<GitIgnore>,
+    prefix: PathBuf,
 }
 
 impl GitIgnoreStack {
+    pub(crate) fn external(root: &Path) -> Result<Self> {
+        let mut stack = Self::default();
+        let configured = Command::new("git")
+            .args(["config", "--null", "--path", "--get", "core.excludesFile"])
+            .current_dir(root)
+            .output()?;
+        let global = match configured.status.code() {
+            Some(0) => Some(PathBuf::from(
+                str::from_utf8(&configured.stdout)?.trim_end_matches('\0'),
+            )),
+            Some(1) => env::var_os("XDG_CONFIG_HOME")
+                .filter(|path| return !path.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| {
+                    return env::var_os("HOME")
+                        .map(|home| return PathBuf::from(home).join(".config"));
+                })
+                .map(|config| return config.join("git/ignore")),
+            _ => {
+                return Err(failure(format!(
+                    "cannot resolve Git excludes: {}",
+                    String::from_utf8_lossy(&configured.stderr).trim()
+                )));
+            }
+        };
+        let metadata = Command::new("git")
+            .args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--show-toplevel",
+                "--git-path",
+                "info/exclude",
+            ])
+            .current_dir(root)
+            .output()?;
+        let (repository, exclude) = if metadata.status.success() {
+            let output = str::from_utf8(&metadata.stdout)?;
+            let mut paths = output.lines();
+            let repository = PathBuf::from(
+                paths
+                    .next()
+                    .ok_or_else(|| return failure("missing Git repository root"))?,
+            );
+            let exclude = PathBuf::from(
+                paths
+                    .next()
+                    .ok_or_else(|| return failure("missing Git info/exclude path"))?,
+            );
+
+            (repository, Some(exclude))
+        } else if metadata.status.code() == Some(128) {
+            (root.to_path_buf(), None)
+        } else {
+            return Err(failure(format!(
+                "cannot resolve Git info/exclude: {}",
+                String::from_utf8_lossy(&metadata.stderr).trim()
+            )));
+        };
+        stack.prefix = root.strip_prefix(&repository)?.to_path_buf();
+        if let Some(path) = global.filter(|path| return !path.as_os_str().is_empty()) {
+            stack.push_file(PathBuf::new(), &repository.join(path))?;
+        }
+        if let Some(path) = exclude {
+            stack.push_file(PathBuf::new(), &path)?;
+        }
+
+        let mut directory = repository.clone();
+        for component in stack.prefix.clone().components() {
+            stack.push_file(
+                directory.strip_prefix(&repository)?.to_path_buf(),
+                &directory.join(".gitignore"),
+            )?;
+            directory.push(component);
+        }
+
+        return Ok(stack);
+    }
+
+    fn push_file(&mut self, base: PathBuf, path: &Path) -> Result<()> {
+        match fs::read_to_string(path) {
+            Ok(content) => self.ignores.push(GitIgnore::parse(base, &content)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+
+        return Ok(());
+    }
+
     pub(crate) fn push_dir(&mut self, root: &Path, dir: &Path) {
         let Ok(relative) = dir.strip_prefix(root) else {
             return;
@@ -132,14 +222,15 @@ impl GitIgnoreStack {
 
         if let Ok(content) = fs::read_to_string(&gitignore_path) {
             self.ignores
-                .push(GitIgnore::parse(relative.to_path_buf(), &content));
+                .push(GitIgnore::parse(self.prefix.join(relative), &content));
         }
     }
 
     pub(crate) fn is_ignored(&self, relative: &Path, is_dir: bool) -> bool {
         let mut ignored = false;
+        let relative = self.prefix.join(relative);
         for gitignore in &self.ignores {
-            if let Some(state) = gitignore.matches(relative, is_dir) {
+            if let Some(state) = gitignore.matches(&relative, is_dir) {
                 ignored = state;
             }
         }
@@ -386,10 +477,15 @@ fn file_link(
     )));
 }
 
-pub(crate) fn scan(root: &Path, limit: u64, exclusions: &[PathBuf]) -> Result<Snapshot> {
+pub(crate) fn scan(
+    root: &Path,
+    limit: u64,
+    exclusions: &[PathBuf],
+    sources: &GitIgnoreStack,
+) -> Result<Snapshot> {
     let mut result = BTreeMap::new();
     let mut total = 0_u64;
-    let mut gitignores = GitIgnoreStack::default();
+    let mut gitignores = sources.clone();
     gitignores.push_dir(root, root);
 
     let mut pending = vec![root.to_path_buf()];
@@ -492,8 +588,9 @@ pub(crate) fn assert_snapshot(
     expected: &Snapshot,
     limit: u64,
     exclusions: &[PathBuf],
+    sources: &GitIgnoreStack,
 ) -> Result<()> {
-    let actual = scan(root, limit, exclusions)?;
+    let actual = scan(root, limit, exclusions, sources)?;
     if actual == *expected {
         return Ok(());
     }
@@ -524,6 +621,7 @@ pub(crate) fn copy_snapshot(
     replica: &Path,
     files: &Snapshot,
     exclusions: &[PathBuf],
+    sources: &GitIgnoreStack,
 ) -> Result<()> {
     if replica.try_exists()? {
         return Err(failure(format!(
@@ -532,7 +630,7 @@ pub(crate) fn copy_snapshot(
         )));
     }
 
-    let mut gitignores = GitIgnoreStack::default();
+    let mut gitignores = sources.clone();
     gitignores.push_dir(root, root);
 
     fs::create_dir_all(replica)?;
@@ -704,9 +802,13 @@ fn validate_manifest_value(path: &Path, value: &toml::Value) -> Result<()> {
     return Ok(());
 }
 
-pub(crate) fn validate_manifest_paths(root: &Path, exclusions: &[PathBuf]) -> Result<()> {
+pub(crate) fn validate_manifest_paths(
+    root: &Path,
+    exclusions: &[PathBuf],
+    sources: &GitIgnoreStack,
+) -> Result<()> {
     let mut pending = vec![root.to_path_buf()];
-    let mut gitignores = GitIgnoreStack::default();
+    let mut gitignores = sources.clone();
     gitignores.push_dir(root, root);
 
     while let Some(directory) = pending.pop() {
@@ -813,9 +915,10 @@ mod tests {
         symlink("AGENTS.md", root.join("vendor/CLAUDE.md"))?;
         symlink("CLAUDE.md", root.join("vendor/CHAIN.md"))?;
         symlink("missing", root.join("vendor/DANGLING.md"))?;
-        let original = scan(&root, 1024, &[])?;
-        copy_snapshot(&root, &replica, &original, &[])?;
-        assert_snapshot(&replica, &original, 1024, &[])?;
+        let sources = GitIgnoreStack::default();
+        let original = scan(&root, 1024, &[], &sources)?;
+        copy_snapshot(&root, &replica, &original, &[], &sources)?;
+        assert_snapshot(&replica, &original, 1024, &[], &sources)?;
         assert_eq!(
             fs::read_link(replica.join("vendor/CLAUDE.md"))?,
             Path::new("AGENTS.md")
@@ -837,7 +940,7 @@ mod tests {
 
         fs::remove_file(root.join("vendor/CLAUDE.md"))?;
         symlink("OTHER.md", root.join("vendor/CLAUDE.md"))?;
-        assert!(assert_snapshot(&root, &original, 1024, &[]).is_err());
+        assert!(assert_snapshot(&root, &original, 1024, &[], &sources).is_err());
 
         return Ok(());
     }
@@ -858,7 +961,10 @@ mod tests {
             let link = root.join("link");
             symlink(target, &link)?;
 
-            assert!(scan(&root, 1024, &[]).is_err(), "accepted {target}");
+            assert!(
+                scan(&root, 1024, &[], &GitIgnoreStack::default()).is_err(),
+                "accepted {target}"
+            );
 
             fs::remove_file(link)?;
         }
@@ -888,10 +994,11 @@ mod tests {
         fs::write(root.join("results-kept/source.rs"), "fn main() {}")?;
         let exclusions = vec![safe_relative("results")?];
 
-        assert!(scan(&root, 1024, &[]).is_err());
+        let sources = GitIgnoreStack::default();
+        assert!(scan(&root, 1024, &[], &sources).is_err());
 
-        let original = scan(&root, 1024, &exclusions)?;
-        copy_snapshot(&root, &replica, &original, &exclusions)?;
+        let original = scan(&root, 1024, &exclusions, &sources)?;
+        copy_snapshot(&root, &replica, &original, &exclusions, &sources)?;
         assert_eq!(
             fs::read_to_string(replica.join("results-kept/source.rs"))?,
             "fn main() {}"
@@ -899,9 +1006,9 @@ mod tests {
         assert!(!replica.join("results").exists());
 
         fs::write(root.join("results/new-output"), "not tracked")?;
-        assert_snapshot(&root, &original, 1024, &exclusions)?;
+        assert_snapshot(&root, &original, 1024, &exclusions, &sources)?;
         symlink("results/new-output", root.join("bypass"))?;
-        assert!(scan(&root, 1024, &exclusions).is_err());
+        assert!(scan(&root, 1024, &exclusions, &sources).is_err());
 
         return Ok(());
     }
@@ -941,7 +1048,8 @@ mod tests {
         fs::write(root.join(".env.example"), "PUBLIC_KEY=123")?;
         fs::write(root.join(".env.secret"), "SECRET_KEY=456")?;
 
-        let original = scan(&root, 1024 * 1024, &[])?;
+        let sources = GitIgnoreStack::default();
+        let original = scan(&root, 1024 * 1024, &[], &sources)?;
         assert!(original.contains_key(".gitignore"));
         assert!(original.contains_key("src/lib.rs"));
         assert!(original.contains_key(".env.example"));
@@ -950,7 +1058,7 @@ mod tests {
         assert!(!original.contains_key("packages/typescript/node_modules/package.json"));
         assert!(!original.contains_key("benchmarks/results/large-live.fifo"));
 
-        copy_snapshot(&root, &replica, &original, &[])?;
+        copy_snapshot(&root, &replica, &original, &[], &sources)?;
 
         assert_eq!(
             fs::read_to_string(replica.join("src/lib.rs"))?,
