@@ -2,6 +2,23 @@ use ra_ap_syntax::{SyntaxKind, SyntaxNode};
 
 pub(crate) fn protected(node: &SyntaxNode) -> bool {
     return node.ancestors().any(|ancestor| {
+        let derived = ancestor.kind() != SyntaxKind::SOURCE_FILE
+            && ancestor
+                .children()
+                .filter(|child| {
+                    return child.kind() == SyntaxKind::ATTR;
+                })
+                .any(|attr| {
+                    return attr
+                        .text()
+                        .to_string()
+                        .chars()
+                        .filter(|c| {
+                            return !c.is_whitespace();
+                        })
+                        .collect::<String>()
+                        .starts_with("#[derive(");
+                });
         return ancestor
             .children()
             .filter(|child| return child.kind() == SyntaxKind::ATTR)
@@ -28,7 +45,7 @@ pub(crate) fn protected(node: &SyntaxNode) -> bool {
 
                 // Unknown procedural attributes may rewrite original syntax. Do not
                 // assume a valid original-source mapping through such a transform.
-                return !matches!(
+                let built_in = matches!(
                     name,
                     "allow"
                         | "warn"
@@ -65,6 +82,12 @@ pub(crate) fn protected(node: &SyntaxNode) -> bool {
                         | "type_length_limit"
                         | "feature"
                 );
+                let derive_helper = derived
+                    && matches!(
+                        name,
+                        "serde" | "clap" | "command" | "arg" | "value" | "schemars" | "strum"
+                    );
+                return !built_in && !derive_helper;
             });
     });
 }

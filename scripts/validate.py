@@ -105,7 +105,6 @@ def main():
                     ROOT / "lint",
                 )
                 run([sys.executable, "scripts/validate_registration.py"])
-                # Real checks below use an installed consumer outside the source tree.
                 with tempfile.TemporaryDirectory(
                     prefix="statement-spacing-real-validation-"
                 ) as name:
@@ -165,7 +164,6 @@ def main():
                     )
                     assert (dependency / "zig-out/artifact").read_bytes() == b"ignored build output"
                     assert (dependency / "source.txt").read_text() == "dependency source\n"
-                    # Hard requirement: use --check; do not write-format the candidate.
                     run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
                     again = run(base + ["fix", *arguments], fixture)
                     assert not json.loads(again.stdout)["changed_files"], (
@@ -174,7 +172,6 @@ def main():
                     run(base + ["check", *arguments], fixture)
                     run(["cargo", "+1.96.0", "check", "--locked"], fixture)
 
-                    # Real compiler regressions for cohesive operation groups.
                     grouped = (ROOT / "tests/fixtures/grouping.rs").read_bytes()
                     source.write_bytes(grouped)
                     run(base + ["check", *arguments], fixture)
@@ -184,8 +181,6 @@ def main():
                         "fix fragmented an intentionally cohesive operation group"
                     )
 
-                    # Relatedness must not leak through a shared nested callee,
-                    # or turn an immutable receiver into a mutation.
                     compact = grouped
                     for boundary in (
                         b"alpha(left);\n\n    beta(right);",
@@ -212,7 +207,6 @@ def main():
                     run(base + ["check", *arguments], fixture, expected=(1,))
                     (fixture / "dylint.toml").write_text("[statement_spacing]\n")
 
-                    # Audit regressions use the visual normalization preferences.
                     audit = (ROOT / "tests/fixtures/audit.rs").read_bytes()
                     source.write_bytes(audit)
                     (fixture / "dylint.toml").write_text(
@@ -227,16 +221,17 @@ def main():
                     for candidate in (
                         audit.replace(b'"#;\n\nconst', b'"#;\nconst')
                         .replace(b"\n\n    let mut masks", b"\n    let mut masks")
-                        .replace(b"\n\n    fs::remove_file", b"\n    fs::remove_file"),
+                        .replace(b"\n\n    fs::remove_file", b"\n    fs::remove_file")
+                        .replace(b"* u128::from(width);\n\n", b"* u128::from(width);\n")
+                        .replace(b"entry.value.trim();\n\n", b"entry.value.trim();\n")
+                        .replace(b"validate_target(target)?;\n\n", b"validate_target(target)?;\n"),
                         audit.replace(b"    let mut health", b"\n    let mut health")
                         .replace(b"    let mut last_dash", b"\n    let mut last_dash")
                         .replace(b"    for clip", b"\n    for clip")
                         .replace(b"    if !status", b"\n    if !status")
                         .replace(b"        if names", b"\n        if names")
-                        .replace(b"        if (product", b"\n        if (product")
                         .replace(b"    let hex", b"\n    let hex")
                         .replace(b"    let value = entry", b"\n    let value = entry")
-                        .replace(b"    validate_name(name)", b"\n    validate_name(name)")
                         .replace(b"    if sim.golden", b"\n    if sim.golden")
                         .replace(b"    dirty |= ui", b"\n    dirty |= ui")
                         .replace(b"    assert!(verify", b"\n    assert!(verify")
@@ -253,7 +248,6 @@ def main():
                     source.write_bytes(grouped)
                     (fixture / "dylint.toml").write_text("[statement_spacing]\n")
 
-                    # Suppression and expectation operate at actual compiler nodes.
                     for attribute in ("allow", "expect"):
                         source.write_text(
                             "#![deny(unfulfilled_lint_expectations)]\n"
@@ -264,13 +258,11 @@ def main():
                         run(["cargo", "+1.96.0", "fmt", "--all"], fixture)  # baseline only
                         run(base + ["check", *arguments], fixture)
 
-                    # Fail closed on invalid user configuration.
                     (fixture / "dylint.toml").write_text(
                         '[statement_spacing.grouping]\nexpressions="typo"\n'
                     )
                     run(base + ["check", *arguments], fixture, expected=(2,))
 
-                    # Native Dylint --fix path, independently of the verified wrapper.
                     (fixture / "dylint.toml").write_text("[statement_spacing]\n")
                     source.write_bytes(before)
                     # The synthetic submodule marker was needed for verified
@@ -287,7 +279,7 @@ def main():
                             "user.email=fixture@example.invalid",
                             "commit",
                             "-qm",
-                            "fixture baseline",
+                            "test: initialize validation fixture",
                         ],
                         fixture,
                     )

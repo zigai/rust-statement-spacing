@@ -1,7 +1,7 @@
 //! Relationships between resolved local places.
 
 use crate::config::{Grouping, SelfFields, UseIn};
-use crate::model::{Facts, Place};
+use crate::model::{Facts, Place, Unit, UnitKind};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,6 +48,42 @@ pub(crate) fn outputs(facts: &Facts) -> BTreeSet<Place> {
 
 pub(crate) fn direct_producer(a: &Facts, b: &Facts, settings: &Grouping) -> bool {
     return a.known && b.known && intersects(&outputs(a), &b.reads, settings.self_fields);
+}
+pub(crate) fn merges_flows(
+    a: &Facts,
+    b: &Facts,
+    earlier: &BTreeSet<Place>,
+    mode: SelfFields,
+) -> bool {
+    let mut flow = a.definitions.clone();
+    flow.extend(a.reads.iter().cloned());
+    flow.extend(a.writes.iter().cloned());
+    let single = |read: &Place| return BTreeSet::from([read.clone()]);
+    return b.reads.iter().any(|read| {
+        return header_covered_by(earlier, &single(read), mode)
+            && !header_covered_by(&flow, &single(read), mode);
+    });
+}
+pub(crate) fn unique_feeder_before(units: &[Unit], edge: usize, mode: SelfFields) -> bool {
+    let (Some(before), Some(after)) = (units.get(edge), units.get(edge + 1)) else {
+        return false;
+    };
+    let inputs = if after.kind == UnitKind::Control {
+        after.facts.header_reads.clone()
+    } else {
+        after.facts.reads.clone()
+    };
+    let Some(prefix) = units.get(..edge.saturating_add(1)) else {
+        return false;
+    };
+    if !intersects(&before.facts.definitions, &inputs, mode) {
+        return false;
+    }
+    let feeders = prefix
+        .iter()
+        .filter(|unit| return intersects(&unit.facts.definitions, &inputs, mode))
+        .count();
+    return feeders == 1;
 }
 
 fn object_accesses<'facts>(
@@ -98,9 +134,8 @@ pub(crate) fn relationship(a: &Facts, b: &Facts, settings: &Grouping) -> Relatio
         || (settings.consecutive_mutations && mutates(a) && mutates(b))
     {
         return Relationship::Related;
-    } else {
-        return Relationship::Unrelated;
     }
+    return Relationship::Unrelated;
 }
 
 pub(crate) fn control_inputs(facts: &Facts, mode: UseIn) -> BTreeSet<Place> {
@@ -114,10 +149,24 @@ pub(crate) fn control_inputs(facts: &Facts, mode: UseIn) -> BTreeSet<Place> {
     return inputs;
 }
 
+pub(crate) fn header_covered_by(
+    definitions: &BTreeSet<Place>,
+    header_reads: &BTreeSet<Place>,
+    mode: SelfFields,
+) -> bool {
+    return !header_reads.is_empty()
+        && header_reads.iter().all(|read| {
+            return definitions
+                .iter()
+                .any(|definition| return places_overlap(definition, read, mode));
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::model::{ByteRange, RuleMask, Shape};
 
     fn facts(defs: &[&str], reads: &[&str]) -> Facts {
         return Facts {
@@ -129,6 +178,38 @@ mod tests {
                 .collect(),
             ..Facts::default()
         };
+    }
+
+    fn unit(facts: Facts) -> Unit {
+        return Unit {
+            range: ByteRange::default(),
+            code_range: ByteRange::default(),
+            kind: UnitKind::Let,
+            shape: Shape::default(),
+            is_tail: false,
+            is_guard: false,
+            is_empty_loop: false,
+            is_loop_exit: false,
+            is_bare_return: false,
+            active: true,
+            protected: false,
+            facts,
+            enabled: RuleMask::all(),
+            anchor: 0,
+        };
+    }
+
+    #[test]
+    fn unique_feeder_must_be_immediately_before_the_consumer() {
+        let direct = [unit(facts(&["input"], &[])), unit(facts(&[], &["input"]))];
+        assert!(unique_feeder_before(&direct, 0, SelfFields::Distinct));
+
+        let interrupted = [
+            unit(facts(&["input"], &[])),
+            unit(facts(&["unrelated"], &[])),
+            unit(facts(&[], &["input"])),
+        ];
+        assert!(!unique_feeder_before(&interrupted, 1, SelfFields::Distinct));
     }
 
     #[test]

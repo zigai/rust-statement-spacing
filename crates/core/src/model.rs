@@ -295,6 +295,10 @@ pub enum StatementRole {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "The public serialized source model exposes syntax predicates as separate boolean fields."
+)]
 /// Syntactic visual-grouping evidence; never a substitute for resolved places.
 pub struct Shape {
     /// Outer initializer or expression form after transparent wrappers.
@@ -311,8 +315,14 @@ pub struct Shape {
     pub error_handler: Option<String>,
     /// Whether a short guard actually exits, rather than merely ending with `?`.
     pub exiting_guard: bool,
+    /// Executable statements in a loop body.
+    #[serde(default)]
+    pub loop_body_statements: Option<usize>,
     /// Ranges of immediate string inputs, excluding deferred bodies.
     pub string_inputs: Vec<ByteRange>,
+    /// Whether an assertion pins an exact value.
+    #[serde(default)]
+    pub pins_value: bool,
     /// Sole method-call statement in an if body without an else arm.
     #[serde(default)]
     pub conditional_action: Option<ByteRange>,

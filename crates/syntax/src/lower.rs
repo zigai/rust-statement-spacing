@@ -9,9 +9,9 @@ use crate::units::{
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 use rust_statement_spacing_core::edits::is_trivia;
 use rust_statement_spacing_core::{
-    ByteRange, Facts, Rule, RuleMask, SourceModel, StatementRole, Unit, UnitKind, UnitList,
+    ByteRange, Facts, ItemKind, Rule, RuleMask, Shape, SourceModel, StatementRole, Unit, UnitKind,
+    UnitList,
 };
-
 fn make_unit(
     node: &SyntaxNode,
     semantics: Option<&SemanticIndex>,
@@ -123,6 +123,27 @@ fn make_unit(
     };
 }
 
+fn leading_inner_docs(source: &str, first: &Unit) -> Option<ByteRange> {
+    let prefix = source.get(..first.range.start)?;
+    let mut start = None;
+    let mut end = None;
+    let mut offset = 0;
+    for line in prefix.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//!") {
+            if start.is_none() {
+                start = Some(offset + (line.len() - trimmed.len()));
+            }
+            end = Some(offset + line.trim_end().len());
+        } else if !(trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#')) {
+            start = None;
+            end = None;
+        }
+        offset += line.len();
+    }
+    return start.and_then(|start| return end.map(|end| return ByteRange::new(start, end)));
+}
+
 pub(crate) fn lower(
     root: &SyntaxNode,
     source: &str,
@@ -143,14 +164,13 @@ pub(crate) fn lower(
         }
 
         let test_statements = shape::test_statements(&container);
-        let units: Vec<_> = container
+        let mut units: Vec<_> = container
             .children()
             .filter(|node| {
                 if item_list {
                     return is_item(node);
-                } else {
-                    return is_unit(node);
                 }
+                return is_unit(node);
             })
             .map(|node| {
                 let unit = make_unit(&node, semantics, test_statements);
@@ -183,6 +203,30 @@ pub(crate) fn lower(
             })
             .collect();
 
+        if item_list
+            && let Some(first) = units.first()
+            && let Some(docs) = leading_inner_docs(source, first)
+        {
+            units.insert(
+                0,
+                Unit {
+                    range: docs,
+                    code_range: docs,
+                    kind: UnitKind::Item(ItemKind::Major),
+                    shape: Shape::default(),
+                    is_tail: false,
+                    is_guard: false,
+                    is_empty_loop: false,
+                    is_loop_exit: false,
+                    is_bare_return: false,
+                    active: true,
+                    protected: false,
+                    facts: Facts::default(),
+                    enabled: RuleMask::none(),
+                    anchor: 0,
+                },
+            );
+        }
         let gaps = units
             .windows(2)
             .filter_map(|pair| {

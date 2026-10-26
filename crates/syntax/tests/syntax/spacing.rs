@@ -58,9 +58,49 @@ fn multiline_phases_preserve_short_bindings_and_comment_attachments() -> Result<
     let mut config = Config::default();
     config.grouping.bindings = Bindings::Multiline;
     config.grouping.expressions = Expressions::Multiline;
-    assert_eq!(structural(source, &config)?.0, expected);
-    assert!(structural(expected, &config)?.1.findings.is_empty());
-
+    let mut parsed = parse_source(source, "2024")?;
+    let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
+    parsed.attach(source, &anchors);
+    for list in &mut parsed.model.lists {
+        for unit in &mut list.units {
+            if source
+                .get(unit.code_range.as_range())
+                .is_some_and(|text| return text.starts_with("let seed"))
+            {
+                unit.facts.definitions.insert(Place::local("seed"));
+            } else if source
+                .get(unit.code_range.as_range())
+                .is_some_and(|text| return text.starts_with("let first"))
+            {
+                unit.facts.reads.insert(Place::local("seed"));
+            }
+        }
+    }
+    let result = plan(&config, source, &parsed.model)?;
+    assert_eq!(apply_edits(source, &result.edits())?, expected);
+    let mut reparsed = parse_source(expected, "2024")?;
+    let anchors = SemanticIndex::structural_anchors(reparsed.code_ranges());
+    reparsed.attach(expected, &anchors);
+    for list in &mut reparsed.model.lists {
+        for unit in &mut list.units {
+            if expected
+                .get(unit.code_range.as_range())
+                .is_some_and(|text| return text.starts_with("let seed"))
+            {
+                unit.facts.definitions.insert(Place::local("seed"));
+            } else if expected
+                .get(unit.code_range.as_range())
+                .is_some_and(|text| return text.starts_with("let first"))
+            {
+                unit.facts.reads.insert(Place::local("seed"));
+            }
+        }
+    }
+    assert!(
+        plan(&config, expected, &reparsed.model)?
+            .findings
+            .is_empty()
+    );
     config.grouping.bindings = Bindings::Preserve;
     config.grouping.expressions = Expressions::Preserve;
     assert_eq!(structural(source, &config)?.0, source);
@@ -1041,7 +1081,6 @@ fn action_assertion_and_shared_input_verification_form_one_step() -> Result<(), 
     let source = format!(
         "#[test]\nfn checks() {{\n    assert!(ready);\n    assert!(attached);\n\n    {action}\n    {check}\n    {verification}\n}}\n"
     );
-
     for input in [
         &source,
         &source.replace(verification, &format!("\n    {verification}")),
@@ -1264,11 +1303,11 @@ fn audit_distinct_fallible_validators_and_ui_assignments() -> Result<(), Box<dyn
             ..Facts::default()
         },
     ];
-    let expected = format!("fn f() {{\n    {first}\n    {second}\n}}\n");
+    let expected = format!("fn f() {{\n    {first}\n\n    {second}\n}}\n");
 
     assert_eq!(
         normalized_pair(
-            &expected.replace("    validate_display", "\n    validate_display"),
+            &expected.replace("\n\n", "\n"),
             &config,
             first,
             second,
@@ -1469,7 +1508,7 @@ fn audit_large_accumulator_setup_retains_overflow_boundary() -> Result<(), Box<d
 
         parsed.attach(&source, &semantics);
 
-        let expected = if count > 4 {
+        let expected = if count > 3 {
             source.replace("    for value", "\n    for value")
         } else {
             source.clone()
@@ -1607,5 +1646,1929 @@ fn mutation_assertions_require_the_changed_value() -> Result<(), Box<dyn Error>>
         }
     }
 
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn loop_body_statement_counts() -> Result<(), Box<dyn Error>> {
+    let source = "fn f(items: &[u32]) {\n    for item in items {\n        push(item);\n    }\n    while done() {\n        step();\n        step();\n    }\n    loop {\n    }\n    if ready() {\n    }\n}\n";
+    let mut parsed = parse_source(source, "2024")?;
+    let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
+    parsed.attach(source, &anchors);
+    let mut counts = Vec::new();
+    for list in &parsed.model.lists {
+        for unit in &list.units {
+            if unit.kind == UnitKind::Control && unit.shape.form == Form::Loop {
+                counts.push(unit.shape.loop_body_statements);
+            }
+        }
+    }
+    assert_eq!(counts, vec![Some(1), Some(2), Some(0)]);
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn pinned_values_mark_content_assertions() -> Result<(), Box<dyn Error>> {
+    let source = r##"fn f() {
+    assert_eq!(status["done"], false);
+    assert_eq!(status["label"], r#"ready"#);
+    assert_eq!(status["raw"], br#"ready"#);
+    assert_eq!(outcome.exit_code, Some(0));
+    assert!(outcome.is_some());
+    assert_ne!(a, b);
+    assert_eq!(actual, expected2);
+    assert_eq!(actual, "prefix".to_owned());
+    assert_eq!(actual, -42);
+}
+"##;
+    let mut parsed = parse_source(source, "2024")?;
+    let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
+    parsed.attach(source, &anchors);
+    let mut flags = Vec::new();
+    for list in &parsed.model.lists {
+        for unit in &list.units {
+            if unit.shape.role == StatementRole::Assertion {
+                flags.push(unit.shape.pins_value);
+            }
+        }
+    }
+    assert_eq!(
+        flags,
+        vec![true, true, true, false, false, false, false, false, true]
+    );
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn module_docs_separate_from_declarations() -> Result<(), Box<dyn Error>> {
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let joined = "//! Embed the source revision.\nuse std::process::Command;\n";
+    let spaced = "//! Embed the source revision.\n\nuse std::process::Command;\n";
+    assert_eq!(structural(joined, &config)?.0, spaced);
+    assert_eq!(structural(spaced, &config)?.0, spaced);
+    return Ok(());
+}
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn documented_items_separate_from_use_groups() -> Result<(), Box<dyn Error>> {
+    let config = visual_config();
+    for joined in [
+        "use uuid::Uuid;\n/// Doc.\nstruct S;\n",
+        "use uuid::Uuid;\n#[derive(Clone)]\nstruct S;\n",
+        "use uuid::Uuid;\n/// Doc.\n#[derive(Clone)]\nstruct S;\n",
+        "use uuid::Uuid;\n/// Doc.\n#[derive(Clone, Debug)]\n#[serde(rename_all = \"snake_case\")]\nenum E {\n    A,\n}\n",
+        "use uuid::Uuid;\nstruct S;\n",
+    ] {
+        let spaced = joined.replacen(";\n", ";\n\n", 1);
+        assert_eq!(structural(joined, &config)?.0, spaced);
+        assert_eq!(structural(&spaced, &config)?.0, spaced);
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn size_sanity_checks_do_not_pin() -> Result<(), Box<dyn Error>> {
+    let source = "fn f() {\n    assert_eq!(page.len(), 3);\n    assert_eq!(summary.item_count, 1);\n    assert_eq!(count, 111);\n    assert_eq!(failure.code, \"x\");\n}\n";
+    let mut parsed = parse_source(source, "2024")?;
+    let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
+    parsed.attach(source, &anchors);
+    let mut flags = Vec::new();
+    for list in &parsed.model.lists {
+        for unit in &list.units {
+            if unit.shape.role == StatementRole::Assertion {
+                flags.push(unit.shape.pins_value);
+            }
+        }
+    }
+    assert_eq!(flags, vec![false, false, false, true]);
+    return Ok(());
+}
+
+enum Use {
+    Define,
+    Read,
+    Receiver,
+    MutatingReceiver,
+    Write,
+    Call,
+    Unknown,
+}
+
+type VisualCase = (
+    &'static str,
+    &'static str,
+    &'static [(Use, &'static str)],
+    &'static str,
+);
+
+fn compiled_visual(source: &str, uses: &[(Use, &str)]) -> Result<String, Box<dyn Error>> {
+    let mut parsed = parse_source(source, "2024")?;
+    let mut index = SemanticIndex::structural_anchors(parsed.code_ranges());
+    for (role, marked) in uses {
+        let needle = marked.replace('`', "");
+        let mut found = source.match_indices(&needle);
+        let (Some((offset, _)), None) = (found.next(), found.next()) else {
+            return Err(format!("{needle:?} must occur exactly once").into());
+        };
+        let (Some(open), Some(close)) = (marked.find('`'), marked.rfind('`')) else {
+            return Err(format!("{marked:?} must mark its event with backticks").into());
+        };
+        let text = marked.get(open + 1..close).ok_or("empty event marker")?;
+        let range = ByteRange::new(offset + open, offset + close - 1);
+        let mut segments = text.split('.');
+        let place = Place {
+            local: segments.next().unwrap_or_default().to_owned(),
+            projections: segments.map(|field| return format!(".{field}")).collect(),
+            is_self: false,
+        };
+        let kinds = match role {
+            Use::Define => vec![EventKind::Define],
+            Use::Read => vec![EventKind::Read],
+            Use::Receiver => vec![EventKind::Read, EventKind::Receiver],
+            Use::MutatingReceiver => vec![
+                EventKind::Read,
+                EventKind::Receiver,
+                EventKind::MutatingReceiver,
+            ],
+            Use::Write => vec![EventKind::Write],
+            Use::Unknown => vec![EventKind::Unknown],
+            Use::Call => {
+                let name = text.split('(').next().unwrap_or_default();
+                index.events.push(Event {
+                    range,
+                    kind: EventKind::DirectCallee(format!("DefId(0:1 ~ app::{name})")),
+                    place: None,
+                });
+                continue;
+            }
+        };
+        for kind in kinds {
+            index.events.push(Event {
+                range,
+                kind,
+                place: Some(place.clone()),
+            });
+        }
+    }
+    parsed.attach(source, &index);
+
+    let mut config = visual_config();
+    config.grouping.join_related = true;
+    let result = plan(&config, source, &parsed.model)?;
+    let fixed = apply_edits(source, &result.edits())?;
+    if token_fingerprint(source, "2024")? != token_fingerprint(&fixed, "2024")? {
+        return Err("token fingerprint mismatch after edits".into());
+    }
+    return Ok(fixed);
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn visual_returns_attach_only_to_the_values_their_step_produced() -> Result<(), Box<dyn Error>> {
+    let cases: [VisualCase; 11] = [
+        (
+            "passthrough of the produced binding",
+            "fn f(input: &str) -> Vec<u8> {
+    let bytes = encode(input);
+    return bytes;
+}
+",
+            &[
+                (Use::Define, "let `bytes` ="),
+                (Use::Read, "encode(`input`)"),
+                (Use::Read, "return `bytes`;"),
+            ],
+            "fn f(input: &str) -> Vec<u8> {
+    let bytes = encode(input);
+    return bytes;
+}
+",
+        ),
+        (
+            "wrapping the produced binding",
+            "fn f(items: &[u32]) -> Result<u32, Error> {
+    let total = sum(items);
+    return Ok(total);
+}
+",
+            &[
+                (Use::Define, "let `total` ="),
+                (Use::Read, "sum(`items`)"),
+                (Use::Read, "Ok(`total`)"),
+            ],
+            "fn f(items: &[u32]) -> Result<u32, Error> {
+    let total = sum(items);
+    return Ok(total);
+}
+",
+        ),
+        (
+            "joining the produced binding onto an outer value",
+            "fn f(base: &Path, name: &str) -> Result<PathBuf, Error> {
+    let key = name.to_owned();
+    return Ok(base.join(key));
+}
+",
+            &[
+                (Use::Define, "let `key` ="),
+                (Use::Receiver, "`name`.to_owned()"),
+                (Use::Receiver, "Ok(`base`.join"),
+                (Use::Read, "join(`key`)"),
+            ],
+            "fn f(base: &Path, name: &str) -> Result<PathBuf, Error> {
+    let key = name.to_owned();
+    return Ok(base.join(key));
+}
+",
+        ),
+        (
+            "reading the store the step just validated",
+            "fn f(store: &Store) -> Result<Snapshot, Error> {
+    store.flush().map_err(io_error)?;
+    return store.snapshot();
+}
+",
+            &[
+                (Use::Receiver, "`store`.flush()"),
+                (Use::Receiver, "return `store`.snapshot()"),
+            ],
+            "fn f(store: &Store) -> Result<Snapshot, Error> {
+    store.flush().map_err(io_error)?;
+    return store.snapshot();
+}
+",
+        ),
+        (
+            "multiline assembly from the produced binding",
+            "fn f(command: &str) -> Option<PathBuf> {
+    let path = lookup(\"PATH\")?;
+    return split(&path)
+        .map(|part| part.join(command))
+        .find(|candidate| candidate.is_file());
+}
+",
+            &[
+                (Use::Define, "let `path` ="),
+                (Use::Read, "split(&`path`)"),
+                (Use::Receiver, "`part`.join"),
+                (Use::Read, "join(`command`)"),
+                (Use::Receiver, "`candidate`.is_file"),
+            ],
+            "fn f(command: &str) -> Option<PathBuf> {
+    let path = lookup(\"PATH\")?;
+    return split(&path)
+        .map(|part| part.join(command))
+        .find(|candidate| candidate.is_file());
+}
+",
+        ),
+        (
+            "tail call over the step's output in a long block",
+            "fn f(input: Input) -> Result<Out, Error> {
+    one();
+
+    two();
+
+    three();
+
+    four();
+
+    let output = produce(
+        input,
+    )?;
+    return finish(output);
+}
+",
+            &[
+                (Use::Define, "let `output` ="),
+                (Use::Read, "        `input`,"),
+                (Use::Read, "finish(`output`)"),
+            ],
+            "fn f(input: Input) -> Result<Out, Error> {
+    one();
+
+    two();
+
+    three();
+
+    four();
+
+    let output = produce(
+        input,
+    )?;
+    return finish(output);
+}
+",
+        ),
+        (
+            "tail call over fresh inputs in a long block",
+            "fn f(input: Input, other: Other) -> Result<Out, Error> {
+    one();
+
+    two();
+
+    three();
+
+    four();
+
+    let output = produce(
+        input,
+    )?;
+    return finish(
+        other,
+    );
+}
+",
+            &[
+                (Use::Define, "let `output` ="),
+                (Use::Read, "        `input`,"),
+                (Use::Read, "        `other`,"),
+            ],
+            "fn f(input: Input, other: Other) -> Result<Out, Error> {
+    one();
+
+    two();
+
+    three();
+
+    four();
+
+    let output = produce(
+        input,
+    )?;
+
+    return finish(
+        other,
+    );
+}
+",
+        ),
+        (
+            "constructed value over fresh inputs in a long block",
+            "fn f(base: Base, other: Other) -> Result<Report, Error> {
+    one();
+
+    two();
+
+    three();
+
+    four();
+
+    let path = build(
+        base,
+    )?;
+    return Ok(Report {
+        other,
+    });
+}
+",
+            &[
+                (Use::Define, "let `path` ="),
+                (Use::Read, "        `base`,"),
+                (Use::Read, "        `other`,"),
+            ],
+            "fn f(base: Base, other: Other) -> Result<Report, Error> {
+    one();
+
+    two();
+
+    three();
+
+    four();
+
+    let path = build(
+        base,
+    )?;
+
+    return Ok(Report {
+        other,
+    });
+}
+",
+        ),
+        (
+            "constructed multiline value in a short block",
+            "fn f(log: &Log) -> Result<Ack, Error> {
+    append(log)?;
+    return Ok(Ack {
+        ok: true,
+    });
+}
+",
+            &[(Use::Call, "`append(log)?`;"), (Use::Read, "append(`log`)")],
+            "fn f(log: &Log) -> Result<Ack, Error> {
+    append(log)?;
+    return Ok(Ack {
+        ok: true,
+    });
+}
+",
+        ),
+        (
+            "constructed multiline value in a long block",
+            "fn f(log: &Log) -> Result<Ack, Error> {
+    one();
+
+    two();
+
+    three();
+
+    four();
+
+    append(log)?;
+    return Ok(Ack {
+        ok: true,
+    });
+}
+",
+            &[(Use::Call, "`append(log)?`;"), (Use::Read, "append(`log`)")],
+            "fn f(log: &Log) -> Result<Ack, Error> {
+    one();
+
+    two();
+
+    three();
+
+    four();
+
+    append(log)?;
+
+    return Ok(Ack {
+        ok: true,
+    });
+}
+",
+        ),
+        (
+            "compact value after a multiline step",
+            "fn f(graph: &Graph) -> Vec<Pair> {
+    visit(
+        graph,
+    );
+    return pairs;
+}
+",
+            &[
+                (Use::Call, "`visit(\n        graph,\n    )`;"),
+                (Use::Read, "        `graph`,"),
+                (Use::Read, "return `pairs`;"),
+            ],
+            "fn f(graph: &Graph) -> Vec<Pair> {
+    visit(
+        graph,
+    );
+    return pairs;
+}
+",
+        ),
+    ];
+    for (name, source, uses, expected) in cases {
+        assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn visual_bare_completion_exits_stay_with_the_step_they_close() -> Result<(), Box<dyn Error>> {
+    let cases: [VisualCase; 6] = [
+        (
+            "short report",
+            "fn f() -> Result<(), Error> {
+    println!(\"ready\");
+    return Ok(());
+}
+",
+            &[],
+            "fn f() -> Result<(), Error> {
+    println!(\"ready\");
+    return Ok(());
+}
+",
+        ),
+        (
+            "call taking a closure",
+            "fn f() -> Result<(), Error> {
+    drain(|item| {
+        process(item);
+    });
+    return Ok(());
+}
+",
+            &[
+                (
+                    Use::Call,
+                    "`drain(|item| {\n        process(item);\n    })`;",
+                ),
+                (Use::Define, "|`item`|"),
+                (Use::Read, "process(`item`)"),
+            ],
+            "fn f() -> Result<(), Error> {
+    drain(|item| {
+        process(item);
+    });
+    return Ok(());
+}
+",
+        ),
+        (
+            "registration push",
+            "fn f(waiters: &mut Vec<Waiter>, id: u64) -> Result<(), Error> {
+    waiters.push(Waiter {
+        request: id,
+    });
+    return Ok(());
+}
+",
+            &[
+                (Use::MutatingReceiver, "`waiters`.push"),
+                (Use::Read, "request: `id`,"),
+            ],
+            "fn f(waiters: &mut Vec<Waiter>, id: u64) -> Result<(), Error> {
+    waiters.push(Waiter {
+        request: id,
+    });
+    return Ok(());
+}
+",
+        ),
+        (
+            "retry pause",
+            "fn f(backoff: Duration) {
+    while pending() {
+        thread::sleep(backoff);
+        continue;
+    }
+}
+",
+            &[
+                (Use::Call, "`thread::sleep(backoff)`;"),
+                (Use::Read, "sleep(`backoff`)"),
+            ],
+            "fn f(backoff: Duration) {
+    while pending() {
+        thread::sleep(backoff);
+        continue;
+    }
+}
+",
+        ),
+        (
+            "flush",
+            "fn f(writer: &mut Writer) -> Result<(), Error> {
+    flush(writer);
+    return Ok(());
+}
+",
+            &[
+                (Use::Call, "`flush(writer)`;"),
+                (Use::Read, "flush(`writer`)"),
+            ],
+            "fn f(writer: &mut Writer) -> Result<(), Error> {
+    flush(writer);
+    return Ok(());
+}
+",
+        ),
+        (
+            "validation loop",
+            "fn f(entries: Vec<Entry>, seen: &mut Names) -> Result<(), Error> {
+    for entry in entries {
+        if !seen.insert(entry.name) {
+            return Err(duplicate);
+        }
+    }
+    return Ok(());
+}
+",
+            &[
+                (Use::Define, "for `entry` in"),
+                (Use::Read, "in `entries` {"),
+                (Use::MutatingReceiver, "`seen`.insert"),
+                (Use::Read, "insert(`entry.name`)"),
+            ],
+            "fn f(entries: Vec<Entry>, seen: &mut Names) -> Result<(), Error> {
+    for entry in entries {
+        if !seen.insert(entry.name) {
+            return Err(duplicate);
+        }
+    }
+    return Ok(());
+}
+",
+        ),
+    ];
+    for (name, source, uses, expected) in cases {
+        assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn visual_bindings_continue_only_the_step_whose_output_they_use() -> Result<(), Box<dyn Error>> {
+    let cases: [VisualCase; 21] = [
+        (
+            "unrelated operation after a binding",
+            "fn f() {
+    let summary = load(session);
+    checks.sort();
+}
+",
+            &[
+                (Use::Define, "let `summary` ="),
+                (Use::Read, "load(`session`)"),
+                (Use::MutatingReceiver, "`checks`.sort()"),
+            ],
+            "fn f() {
+    let summary = load(session);
+
+    checks.sort();
+}
+",
+        ),
+        (
+            "binding over inputs the previous call did not touch",
+            "fn f() {
+    drop(state);
+    let loaded = load(session);
+}
+",
+            &[
+                (Use::Call, "`drop(state)`;"),
+                (Use::Read, "drop(`state`)"),
+                (Use::Define, "let `loaded` ="),
+                (Use::Read, "load(`session`)"),
+            ],
+            "fn f() {
+    drop(state);
+
+    let loaded = load(session);
+}
+",
+        ),
+        (
+            "literal flag after a call",
+            "fn f() {
+    flush();
+    let done = true;
+}
+",
+            &[(Use::Call, "`flush()`;"), (Use::Define, "let `done` =")],
+            "fn f() {
+    flush();
+    let done = true;
+}
+",
+        ),
+        (
+            "unpacking the produced value",
+            "fn f(line: &str) -> Result<(), Error> {
+    let fields = split(
+        line,
+    )?;
+    let (head, tail) = fields.pair();
+}
+",
+            &[
+                (Use::Define, "let `fields` ="),
+                (Use::Read, "        `line`,"),
+                (Use::Define, "let (`head`, tail)"),
+                (Use::Define, "let (head, `tail`)"),
+                (Use::Receiver, "`fields`.pair()"),
+            ],
+            "fn f(line: &str) -> Result<(), Error> {
+    let fields = split(
+        line,
+    )?;
+    let (head, tail) = fields.pair();
+}
+",
+        ),
+        (
+            "destructuring a fresh call",
+            "fn f(line: &str) -> Result<(), Error> {
+    let fields = split(
+        line,
+    )?;
+    let (head, tail) = compute();
+}
+",
+            &[
+                (Use::Define, "let `fields` ="),
+                (Use::Read, "        `line`,"),
+                (Use::Define, "let (`head`, tail)"),
+                (Use::Define, "let (head, `tail`)"),
+            ],
+            "fn f(line: &str) -> Result<(), Error> {
+    let fields = split(
+        line,
+    )?;
+
+    let (head, tail) = compute();
+}
+",
+        ),
+        (
+            "wrapped method on the produced object",
+            "fn f(config: &Config) -> Result<(), Error> {
+    let parser = config.parser(\"strict\")
+        .map_err(config_error)?;
+    let mut tokens = parser.tokens([])
+        .map_err(config_error)?;
+}
+",
+            &[
+                (Use::Define, "let `parser` ="),
+                (Use::Receiver, "`config`.parser"),
+                (Use::Define, "let mut `tokens` ="),
+                (Use::Receiver, "`parser`.tokens"),
+            ],
+            "fn f(config: &Config) -> Result<(), Error> {
+    let parser = config.parser(\"strict\")
+        .map_err(config_error)?;
+    let mut tokens = parser.tokens([])
+        .map_err(config_error)?;
+}
+",
+        ),
+        (
+            "multiline call over other inputs after a produced object",
+            "fn f(config: &Config) -> Result<(), Error> {
+    let parser = config.parser(\"strict\")
+        .map_err(config_error)?;
+    let applied = apply_input(
+        writer,
+        input,
+    );
+}
+",
+            &[
+                (Use::Define, "let `parser` ="),
+                (Use::Receiver, "`config`.parser"),
+                (Use::Define, "let `applied` ="),
+                (Use::Read, "        `writer`,"),
+                (Use::Read, "        `input`,"),
+            ],
+            "fn f(config: &Config) -> Result<(), Error> {
+    let parser = config.parser(\"strict\")
+        .map_err(config_error)?;
+
+    let applied = apply_input(
+        writer,
+        input,
+    );
+}
+",
+        ),
+        (
+            "predicate closure over the produced object",
+            "fn f(config: &Config) -> Result<(), Error> {
+    let parser = config.parser(\"strict\")
+        .map_err(config_error)?;
+    let usable = parser.is_some_and(|rule| {
+        return rule.weight.unwrap_or(0) > 0;
+    });
+}
+",
+            &[
+                (Use::Define, "let `parser` ="),
+                (Use::Receiver, "`config`.parser"),
+                (Use::Define, "let `usable` ="),
+                (Use::Receiver, "`parser`.is_some_and"),
+                (Use::Define, "|`rule`|"),
+                (Use::Receiver, "`rule.weight`.unwrap_or"),
+            ],
+            "fn f(config: &Config) -> Result<(), Error> {
+    let parser = config.parser(\"strict\")
+        .map_err(config_error)?;
+    let usable = parser.is_some_and(|rule| {
+        return rule.weight.unwrap_or(0) > 0;
+    });
+}
+",
+        ),
+        (
+            "field chosen by a match, then a method chain on it",
+            "fn f(root: Option<Root>, name: &str) {
+    let registry = match root {
+        Some(root) => open(root),
+        None => open_default(),
+    };
+    let directory = registry
+        .root()
+        .join(name);
+}
+",
+            &[
+                (Use::Define, "let `registry` ="),
+                (Use::Read, "match `root` {"),
+                (Use::Define, "Some(`root`) =>"),
+                (Use::Read, "open(`root`)"),
+                (Use::Define, "let `directory` ="),
+                (Use::Receiver, "`registry`\n"),
+                (Use::Read, "join(`name`)"),
+            ],
+            "fn f(root: Option<Root>, name: &str) {
+    let registry = match root {
+        Some(root) => open(root),
+        None => open_default(),
+    };
+    let directory = registry
+        .root()
+        .join(name);
+}
+",
+        ),
+        (
+            "field chosen by a match, then passed to a call",
+            "fn f(root: Option<Root>) {
+    let registry = match root {
+        Some(root) => open(root),
+        None => open_default(),
+    };
+    let summary = summarize(registry);
+}
+",
+            &[
+                (Use::Define, "let `registry` ="),
+                (Use::Read, "match `root` {"),
+                (Use::Define, "Some(`root`) =>"),
+                (Use::Read, "open(`root`)"),
+                (Use::Define, "let `summary` ="),
+                (Use::Read, "summarize(`registry`)"),
+            ],
+            "fn f(root: Option<Root>) {
+    let registry = match root {
+        Some(root) => open(root),
+        None => open_default(),
+    };
+
+    let summary = summarize(registry);
+}
+",
+        ),
+        (
+            "branch refining only the produced value",
+            "fn f(input: Input) -> Result<(), Error> {
+    let signal = compute(
+        &input,
+    )?;
+    let status = if signal.is_ok() {
+        Status::Applied
+    } else {
+        Status::Failed
+    };
+}
+",
+            &[
+                (Use::Define, "let `signal` ="),
+                (Use::Read, "&`input`,"),
+                (Use::Define, "let `status` ="),
+                (Use::Receiver, "if `signal`.is_ok()"),
+            ],
+            "fn f(input: Input) -> Result<(), Error> {
+    let signal = compute(
+        &input,
+    )?;
+    let status = if signal.is_ok() {
+        Status::Applied
+    } else {
+        Status::Failed
+    };
+}
+",
+        ),
+        (
+            "branch that also reads outer state",
+            "fn f(input: Input, ready: bool) -> Result<(), Error> {
+    let signal = compute(
+        &input,
+    )?;
+    let status = if signal.is_ok() && ready {
+        Status::Applied
+    } else {
+        Status::Failed
+    };
+}
+",
+            &[
+                (Use::Define, "let `signal` ="),
+                (Use::Read, "&`input`,"),
+                (Use::Define, "let `status` ="),
+                (Use::Receiver, "if `signal`.is_ok()"),
+                (Use::Read, "&& `ready` {"),
+            ],
+            "fn f(input: Input, ready: bool) -> Result<(), Error> {
+    let signal = compute(
+        &input,
+    )?;
+
+    let status = if signal.is_ok() && ready {
+        Status::Applied
+    } else {
+        Status::Failed
+    };
+}
+",
+        ),
+        (
+            "matches over separate inputs in parallel",
+            "fn f(from: Option<u32>, to: Option<u32>) {
+    let start = match from {
+        Some(mark) => mark,
+        None => 0,
+    };
+    let end = match to {
+        Some(mark) => mark,
+        None => 0,
+    };
+}
+",
+            &[
+                (Use::Define, "let `start` ="),
+                (Use::Read, "match `from` {"),
+                (Use::Define, "let `end` ="),
+                (Use::Read, "match `to` {"),
+            ],
+            "fn f(from: Option<u32>, to: Option<u32>) {
+    let start = match from {
+        Some(mark) => mark,
+        None => 0,
+    };
+    let end = match to {
+        Some(mark) => mark,
+        None => 0,
+    };
+}
+",
+        ),
+        (
+            "second branch on the same flag working on the first result",
+            "fn f(complete: bool, path: &Path) -> Result<(), Error> {
+    let summary = if complete {
+        Summary::read(path)?
+    } else {
+        Summary::empty()
+    };
+    let checked = if complete {
+        validate(summary)?
+    } else {
+        Summary::empty()
+    };
+}
+",
+            &[
+                (Use::Define, "let `summary` ="),
+                (Use::Read, "let summary = if `complete` {"),
+                (Use::Read, "read(`path`)"),
+                (Use::Define, "let `checked` ="),
+                (Use::Read, "let checked = if `complete` {"),
+                (Use::Read, "validate(`summary`)"),
+            ],
+            "fn f(complete: bool, path: &Path) -> Result<(), Error> {
+    let summary = if complete {
+        Summary::read(path)?
+    } else {
+        Summary::empty()
+    };
+
+    let checked = if complete {
+        validate(summary)?
+    } else {
+        Summary::empty()
+    };
+}
+",
+        ),
+        (
+            "boolean derived after a multiline flag",
+            "fn f() {
+    let stable = waiting
+        .matching()
+        .is_some();
+    let finished = exited && closed;
+}
+",
+            &[
+                (Use::Define, "let `stable` ="),
+                (Use::Receiver, "`waiting`\n"),
+                (Use::Define, "let `finished` ="),
+                (Use::Read, "`exited` &&"),
+                (Use::Read, "&& `closed`;"),
+            ],
+            "fn f() {
+    let stable = waiting
+        .matching()
+        .is_some();
+    let finished = exited && closed;
+}
+",
+        ),
+        (
+            "boolean derived from the chunk just written",
+            "fn f() -> Result<(), Error> {
+    bytes.extend_from_slice(
+        chunk,
+    )?;
+    let complete = chunk.last() == Some(&10);
+}
+",
+            &[
+                (Use::MutatingReceiver, "`bytes`.extend"),
+                (Use::Read, "        `chunk`,"),
+                (Use::Define, "let `complete` ="),
+                (Use::Receiver, "`chunk`.last()"),
+            ],
+            "fn f() -> Result<(), Error> {
+    bytes.extend_from_slice(
+        chunk,
+    )?;
+    let complete = chunk.last() == Some(&10);
+}
+",
+        ),
+        (
+            "fresh call after a multiline flag",
+            "fn f() {
+    let stable = waiting
+        .matching()
+        .is_some();
+    let limit = compute_limit();
+}
+",
+            &[
+                (Use::Define, "let `stable` ="),
+                (Use::Receiver, "`waiting`\n"),
+                (Use::Define, "let `limit` ="),
+            ],
+            "fn f() {
+    let stable = waiting
+        .matching()
+        .is_some();
+
+    let limit = compute_limit();
+}
+",
+        ),
+        (
+            "fresh call after a check",
+            "fn f(name: &str) -> Result<(), Error> {
+    validate_name(&name)?;
+    let id = Id::fresh();
+}
+",
+            &[
+                (Use::Call, "`validate_name(&name)?`;"),
+                (Use::Read, "validate_name(&`name`)"),
+                (Use::Define, "let `id` ="),
+            ],
+            "fn f(name: &str) -> Result<(), Error> {
+    validate_name(&name)?;
+
+    let id = Id::fresh();
+}
+",
+        ),
+        (
+            "use of the value just checked",
+            "fn f(name: &str) -> Result<(), Error> {
+    validate_name(&name)?;
+    let short = short_name(&name);
+}
+",
+            &[
+                (Use::Call, "`validate_name(&name)?`;"),
+                (Use::Read, "validate_name(&`name`)"),
+                (Use::Define, "let `short` ="),
+                (Use::Read, "short_name(&`name`)"),
+            ],
+            "fn f(name: &str) -> Result<(), Error> {
+    validate_name(&name)?;
+    let short = short_name(&name);
+}
+",
+        ),
+        (
+            "ignored argument-free cleanup after a stop",
+            "fn f(pid: u32) {
+    terminate(pid);
+    let _ = child.kill();
+}
+",
+            &[
+                (Use::Call, "`terminate(pid)`;"),
+                (Use::Read, "terminate(`pid`)"),
+                (Use::MutatingReceiver, "`child`.kill()"),
+            ],
+            "fn f(pid: u32) {
+    terminate(pid);
+    let _ = child.kill();
+}
+",
+        ),
+        (
+            "ignored call with arguments after a stop",
+            "fn f(pid: u32) {
+    terminate(pid);
+    let _ = child.fetch(limit);
+}
+",
+            &[
+                (Use::Call, "`terminate(pid)`;"),
+                (Use::Read, "terminate(`pid`)"),
+                (Use::Receiver, "`child`.fetch"),
+                (Use::Read, "fetch(`limit`)"),
+            ],
+            "fn f(pid: u32) {
+    terminate(pid);
+
+    let _ = child.fetch(limit);
+}
+",
+        ),
+    ];
+    for (name, source, uses, expected) in cases {
+        assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn visual_repeated_operations_group_by_inputs_and_error_handler() -> Result<(), Box<dyn Error>> {
+    let cases: [VisualCase; 7] = [
+        (
+            "same conversion over the same inputs",
+            "fn f(before: &State, after: &State) {
+    let cursor = changed(
+        before,
+        after,
+    );
+    let modes = changed(
+        before,
+        after,
+    );
+}
+",
+            &[
+                (Use::Define, "let `cursor` ="),
+                (
+                    Use::Read,
+                    "    `before`,\n        after,\n    );\n    let modes",
+                ),
+                (Use::Read, "    `after`,\n    );\n    let modes"),
+                (Use::Define, "let `modes` ="),
+                (Use::Read, "    `before`,\n        after,\n    );\n}"),
+                (Use::Read, "    `after`,\n    );\n}"),
+            ],
+            "fn f(before: &State, after: &State) {
+    let cursor = changed(
+        before,
+        after,
+    );
+
+    let modes = changed(
+        before,
+        after,
+    );
+}
+",
+        ),
+        (
+            "same conversion over sibling fields",
+            "fn f(before: &State, after: &State) {
+    let cursor = changed(
+        before.cursor,
+        after.cursor,
+    );
+    let colors = changed(
+        before.colors,
+        after.colors,
+    );
+}
+",
+            &[
+                (Use::Define, "let `cursor` ="),
+                (Use::Read, "`before.cursor`,"),
+                (Use::Read, "`after.cursor`,"),
+                (Use::Define, "let `colors` ="),
+                (Use::Read, "`before.colors`,"),
+                (Use::Read, "`after.colors`,"),
+            ],
+            "fn f(before: &State, after: &State) {
+    let cursor = changed(
+        before.cursor,
+        after.cursor,
+    );
+
+    let colors = changed(
+        before.colors,
+        after.colors,
+    );
+}
+",
+        ),
+        (
+            "unknown callees do not establish a conversion run",
+            "fn f(before: &State, after: &State) {
+    let cursor = changed(
+        before.cursor,
+        after.cursor,
+    );
+    let modes = changed(
+        before.modes,
+        after.modes,
+    );
+}
+",
+            &[
+                (Use::Unknown, "`before.cursor`,"),
+                (Use::Define, "let `cursor` ="),
+                (Use::Read, "`after.cursor`,"),
+                (Use::Unknown, "`before.modes`,"),
+                (Use::Define, "let `modes` ="),
+                (Use::Read, "`after.modes`,"),
+            ],
+            "fn f(before: &State, after: &State) {
+    let cursor = changed(
+        before.cursor,
+        after.cursor,
+    );
+
+    let modes = changed(
+        before.modes,
+        after.modes,
+    );
+}
+",
+        ),
+        (
+            "parallel checks reporting through the same error constructor",
+            "fn f(width: u32, height: u32) -> Result<(), Error> {
+    let width_px = width
+        .checked_mul(SCALE)
+        .ok_or_else(|| invalid(\"width\"))?;
+    let height_px = height
+        .checked_mul(SCALE)
+        .ok_or_else(|| invalid(\"height\"))?;
+}
+",
+            &[
+                (Use::Define, "let `width_px` ="),
+                (Use::Receiver, "`width`\n"),
+                (Use::Define, "let `height_px` ="),
+                (Use::Receiver, "`height`\n"),
+            ],
+            "fn f(width: u32, height: u32) -> Result<(), Error> {
+    let width_px = width
+        .checked_mul(SCALE)
+        .ok_or_else(|| invalid(\"width\"))?;
+
+    let height_px = height
+        .checked_mul(SCALE)
+        .ok_or_else(|| invalid(\"height\"))?;
+}
+",
+        ),
+        (
+            "different operations sharing an error mapper",
+            "fn f(cache: &Cache, index: &Index) -> Result<(), Error> {
+    cache.reload().map_err(cache_error)?;
+    let entry = index.first().map_err(cache_error)?;
+}
+",
+            &[
+                (Use::Receiver, "`cache`.reload()"),
+                (Use::Define, "let `entry` ="),
+                (Use::Receiver, "`index`.first()"),
+            ],
+            "fn f(cache: &Cache, index: &Index) -> Result<(), Error> {
+    cache.reload().map_err(cache_error)?;
+
+    let entry = index.first().map_err(cache_error)?;
+}
+",
+        ),
+        (
+            "parallel checks reporting through different error constructors",
+            "fn f(width: u32, height: u32) -> Result<(), Error> {
+    let width_px = width
+        .checked_mul(SCALE)
+        .ok_or_else(|| invalid(\"width\"))?;
+    let height_px = height
+        .checked_mul(SCALE)
+        .ok_or_else(|| invalid_height())?;
+}
+",
+            &[
+                (Use::Define, "let `width_px` ="),
+                (Use::Receiver, "`width`\n"),
+                (Use::Define, "let `height_px` ="),
+                (Use::Receiver, "`height`\n"),
+            ],
+            "fn f(width: u32, height: u32) -> Result<(), Error> {
+    let width_px = width
+        .checked_mul(SCALE)
+        .ok_or_else(|| invalid(\"width\"))?;
+
+    let height_px = height
+        .checked_mul(SCALE)
+        .ok_or_else(|| invalid_height())?;
+}
+",
+        ),
+        (
+            "different operations sharing only expect",
+            "fn f(first_path: &Path, second_path: &Path) {
+    open(&first_path).expect(\"first\");
+    let second = read(&second_path).expect(\"second\");
+}
+",
+            &[
+                (Use::Read, "open(&`first_path`)"),
+                (Use::Define, "let `second` ="),
+                (Use::Read, "read(&`second_path`)"),
+            ],
+            "fn f(first_path: &Path, second_path: &Path) {
+    open(&first_path).expect(\"first\");
+
+    let second = read(&second_path).expect(\"second\");
+}
+",
+        ),
+    ];
+    for (name, source, uses, expected) in cases {
+        assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn visual_test_assertions_split_only_when_they_pin_a_produced_value() -> Result<(), Box<dyn Error>>
+{
+    let cases: [VisualCase; 4] = [
+        (
+            "exact value pinned on a parsed result",
+            "#[test]
+fn reports_status() {
+    let server = start();
+
+    connect(server);
+
+    send_ping();
+
+    wait_ready();
+
+    let response = fetch();
+    let status = parse_status(&response).expect(\"status\");
+    assert_eq!(status.ready, false);
+}
+",
+            &[
+                (Use::Define, "let `response` ="),
+                (Use::Define, "let `status` ="),
+                (Use::Read, "parse_status(&`response`)"),
+                (Use::Read, "assert_eq!(`status.ready`,"),
+            ],
+            "#[test]
+fn reports_status() {
+    let server = start();
+
+    connect(server);
+
+    send_ping();
+
+    wait_ready();
+
+    let response = fetch();
+    let status = parse_status(&response).expect(\"status\");
+
+    assert_eq!(status.ready, false);
+}
+",
+        ),
+        (
+            "assertion re-examining the inputs of a check",
+            "#[test]
+fn archive_stays_unlocked() {
+    let root = fixture_root();
+    check_archive(&root, &manifest).expect(\"valid\");
+    assert!(!root.join(LOCK).exists());
+}
+",
+            &[
+                (Use::Define, "let `root` ="),
+                (Use::Read, "check_archive(&`root`,"),
+                (Use::Read, "&`manifest`)"),
+                (Use::Receiver, "!`root`.join"),
+            ],
+            "#[test]
+fn archive_stays_unlocked() {
+    let root = fixture_root();
+    check_archive(&root, &manifest).expect(\"valid\");
+    assert!(!root.join(LOCK).exists());
+}
+",
+        ),
+        (
+            "fixture macro built from the setup above it",
+            "#[test]
+fn runs_tool() {
+    let temporary = TempDir::new().expect(\"temporary\");
+    let command = vec![temporary.clone(), String::from(\"-c\")];
+}
+",
+            &[
+                (Use::Define, "let `temporary` ="),
+                (Use::Define, "let `command` ="),
+                (Use::Receiver, "`temporary`.clone()"),
+            ],
+            "#[test]
+fn runs_tool() {
+    let temporary = TempDir::new().expect(\"temporary\");
+    let command = vec![temporary.clone(), String::from(\"-c\")];
+}
+",
+        ),
+        (
+            "printing a completed multiline production",
+            "fn f() {
+    let output = Builder::new(\"tool\")
+        .arg(\"run\")
+        .output();
+    println!(\"{output:?}\");
+}
+",
+            &[
+                (Use::Define, "let `output` ="),
+                (Use::Read, "\"{`output`:?}\""),
+            ],
+            "fn f() {
+    let output = Builder::new(\"tool\")
+        .arg(\"run\")
+        .output();
+
+    println!(\"{output:?}\");
+}
+",
+        ),
+    ];
+    for (name, source, uses, expected) in cases {
+        assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn visual_contextual_guards_separate_from_setup_they_do_not_check() -> Result<(), Box<dyn Error>> {
+    let cases: [VisualCase; 4] = [
+        (
+            "exiting guard that also reads outer state",
+            "fn f(flag: bool) -> u32 {
+    let value = get();
+    if value == 0 || flag {
+        return 99;
+    }
+    value
+}
+",
+            &[
+                (Use::Define, "let `value` ="),
+                (Use::Read, "if `value` == 0"),
+                (Use::Read, "|| `flag` {"),
+                (Use::Read, "    `value`\n}"),
+            ],
+            "fn f(flag: bool) -> u32 {
+    let value = get();
+
+    if value == 0 || flag {
+        return 99;
+    }
+
+    value
+}
+",
+        ),
+        (
+            "plain branch that also reads outer state",
+            "fn f(flag: bool) {
+    let value = get();
+    if value == 0 || flag {
+        log(value);
+    }
+}
+",
+            &[
+                (Use::Define, "let `value` ="),
+                (Use::Read, "if `value` == 0"),
+                (Use::Read, "|| `flag` {"),
+                (Use::Read, "log(`value`)"),
+            ],
+            "fn f(flag: bool) {
+    let value = get();
+
+    if value == 0 || flag {
+        log(value);
+    }
+}
+",
+        ),
+        (
+            "exiting guard checking only part of the setup",
+            "fn f(entry: Entry) -> Option<u32> {
+    let key = entry.key;
+    let value = entry.value;
+    if key.is_empty() {
+        return None;
+    }
+    Some(value)
+}
+",
+            &[
+                (Use::Define, "let `key` ="),
+                (Use::Read, "= `entry.key`;"),
+                (Use::Define, "let `value` ="),
+                (Use::Read, "= `entry.value`;"),
+                (Use::Receiver, "if `key`.is_empty()"),
+                (Use::Read, "Some(`value`)"),
+            ],
+            "fn f(entry: Entry) -> Option<u32> {
+    let key = entry.key;
+    let value = entry.value;
+
+    if key.is_empty() {
+        return None;
+    }
+
+    Some(value)
+}
+",
+        ),
+        (
+            "branch with unknown effects after an unrelated step",
+            "fn f(handle: Handle) {
+    one();
+
+    two();
+
+    drop(handle);
+    if !pending.is_empty() {
+        flush(pending);
+    }
+}
+",
+            &[
+                (Use::Call, "`drop(handle)`;"),
+                (Use::Read, "drop(`handle`)"),
+                (Use::Receiver, "!`pending`.is_empty()"),
+                (Use::Unknown, "flush(`pending`)"),
+            ],
+            "fn f(handle: Handle) {
+    one();
+
+    two();
+
+    drop(handle);
+
+    if !pending.is_empty() {
+        flush(pending);
+    }
+}
+",
+        ),
+    ];
+    for (name, source, uses, expected) in cases {
+        assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
+    }
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn visual_accumulators_stay_only_with_short_loops_that_fill_them() -> Result<(), Box<dyn Error>> {
+    let cases: [VisualCase; 6] = [
+        (
+            "short loop filling a fresh accumulator",
+            "fn f(items: &[Item]) {
+    one();
+
+    two();
+
+    three();
+
+    let mut out = Vec::new();
+    for item in items {
+        out.push(item);
+    }
+}
+",
+            &[
+                (Use::Define, "let mut `out` ="),
+                (Use::Define, "for `item` in"),
+                (Use::Read, "in `items` {"),
+                (Use::MutatingReceiver, "`out`.push"),
+                (Use::Read, "push(`item`)"),
+            ],
+            "fn f(items: &[Item]) {
+    one();
+
+    two();
+
+    three();
+
+    let mut out = Vec::new();
+    for item in items {
+        out.push(item);
+    }
+}
+",
+        ),
+        (
+            "substantial loop filling a fresh accumulator",
+            "fn f(items: &[Item]) {
+    one();
+
+    two();
+
+    three();
+
+    let mut out = Vec::new();
+    for item in items {
+        let a = work(item);
+        let b = wrap(a);
+        let c = pack(b);
+        let d = seal(c);
+        let e = tag(d);
+        let g = mark(e);
+        let h = sign(g);
+        out.push(h);
+    }
+}
+",
+            &[
+                (Use::Define, "let mut `out` ="),
+                (Use::Define, "for `item` in"),
+                (Use::Read, "in `items` {"),
+                (Use::Define, "let `a` ="),
+                (Use::Read, "work(`item`)"),
+                (Use::Define, "let `b` ="),
+                (Use::Read, "wrap(`a`)"),
+                (Use::Define, "let `c` ="),
+                (Use::Read, "pack(`b`)"),
+                (Use::Define, "let `d` ="),
+                (Use::Read, "seal(`c`)"),
+                (Use::Define, "let `e` ="),
+                (Use::Read, "tag(`d`)"),
+                (Use::Define, "let `g` ="),
+                (Use::Read, "mark(`e`)"),
+                (Use::Define, "let `h` ="),
+                (Use::Read, "sign(`g`)"),
+                (Use::MutatingReceiver, "`out`.push"),
+                (Use::Read, "push(`h`)"),
+            ],
+            "fn f(items: &[Item]) {
+    one();
+
+    two();
+
+    three();
+
+    let mut out = Vec::new();
+
+    for item in items {
+        let a = work(item);
+        let b = wrap(a);
+        let c = pack(b);
+        let d = seal(c);
+        let e = tag(d);
+        let g = mark(e);
+        let h = sign(g);
+        out.push(h);
+    }
+}
+",
+        ),
+        (
+            "two accumulators before a loop that fills both",
+            "fn f(items: &[Item]) {
+    one();
+
+    two();
+
+    three();
+
+    let mut entries = Vec::new();
+    let mut offset = 0;
+    for item in items {
+        entries.push(item);
+        offset += item.len();
+        finish(item);
+    }
+}
+",
+            &[
+                (Use::Define, "let mut `entries` ="),
+                (Use::Define, "let mut `offset` ="),
+                (Use::Define, "for `item` in"),
+                (Use::Read, "in `items` {"),
+                (Use::MutatingReceiver, "`entries`.push"),
+                (Use::Read, "push(`item`)"),
+                (Use::Write, "`offset` +="),
+                (Use::Receiver, "+= `item`.len()"),
+                (Use::Read, "finish(`item`)"),
+            ],
+            "fn f(items: &[Item]) {
+    one();
+
+    two();
+
+    three();
+
+    let mut entries = Vec::new();
+    let mut offset = 0;
+
+    for item in items {
+        entries.push(item);
+        offset += item.len();
+        finish(item);
+    }
+}
+",
+        ),
+        (
+            "producer feeding the cursor a loop drains",
+            "fn f(config: &Config) -> Result<(), Error> {
+    one();
+
+    two();
+
+    three();
+
+    let parser = config.parser(\"strict\")
+        .map_err(config_error)?;
+    let mut tokens = parser.tokens()
+        .map_err(config_error)?;
+    while let Some(token) = tokens.next() {
+        emit(token);
+    }
+}
+",
+            &[
+                (Use::Define, "let `parser` ="),
+                (Use::Receiver, "`config`.parser"),
+                (Use::Define, "let mut `tokens` ="),
+                (Use::Receiver, "`parser`.tokens"),
+                (Use::Define, "Some(`token`) ="),
+                (Use::MutatingReceiver, "`tokens`.next()"),
+                (Use::Read, "emit(`token`)"),
+            ],
+            "fn f(config: &Config) -> Result<(), Error> {
+    one();
+
+    two();
+
+    three();
+
+    let parser = config.parser(\"strict\")
+        .map_err(config_error)?;
+    let mut tokens = parser.tokens()
+        .map_err(config_error)?;
+    while let Some(token) = tokens.next() {
+        emit(token);
+    }
+}
+",
+        ),
+        (
+            "test filling its fixture accumulator",
+            "#[test]
+fn collects() {
+    one();
+
+    two();
+
+    three();
+
+    let mut events = Vec::new();
+    for record in records {
+        let event = Event::from(record);
+        events.push(event);
+    }
+}
+",
+            &[
+                (Use::Define, "let mut `events` ="),
+                (Use::Define, "for `record` in"),
+                (Use::Read, "in `records` {"),
+                (Use::Define, "let `event` ="),
+                (Use::Read, "from(`record`)"),
+                (Use::MutatingReceiver, "`events`.push"),
+                (Use::Read, "push(`event`)"),
+            ],
+            "#[test]
+fn collects() {
+    one();
+
+    two();
+
+    three();
+
+    let mut events = Vec::new();
+    for record in records {
+        let event = Event::from(record);
+        events.push(event);
+    }
+}
+",
+        ),
+        (
+            "same fill outside a test",
+            "fn collects() {
+    one();
+
+    two();
+
+    three();
+
+    let mut events = Vec::new();
+    for record in records {
+        let event = Event::from(record);
+        events.push(event);
+    }
+}
+",
+            &[
+                (Use::Define, "let mut `events` ="),
+                (Use::Define, "for `record` in"),
+                (Use::Read, "in `records` {"),
+                (Use::Define, "let `event` ="),
+                (Use::Read, "from(`record`)"),
+                (Use::MutatingReceiver, "`events`.push"),
+                (Use::Read, "push(`event`)"),
+            ],
+            "fn collects() {
+    one();
+
+    two();
+
+    three();
+
+    let mut events = Vec::new();
+
+    for record in records {
+        let event = Event::from(record);
+        events.push(event);
+    }
+}
+",
+        ),
+    ];
+    for (name, source, uses, expected) in cases {
+        assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
+    }
     return Ok(());
 }

@@ -56,9 +56,8 @@ pub(crate) fn expression_node(node: &SyntaxNode) -> SyntaxNode {
             .children()
             .find(is_expression)
             .unwrap_or_else(|| return node.clone());
-    } else {
-        return node.clone();
     }
+    return node.clone();
 }
 
 fn item_kind(node: &SyntaxNode) -> ItemKind {
@@ -69,9 +68,8 @@ fn item_kind(node: &SyntaxNode) -> ItemKind {
                 .any(|child| return child.kind() == SyntaxKind::BLOCK_EXPR)
             {
                 return ItemKind::Function;
-            } else {
-                return ItemKind::Compact;
             }
+            return ItemKind::Compact;
         }
         SyntaxKind::MODULE => {
             if node
@@ -79,9 +77,8 @@ fn item_kind(node: &SyntaxNode) -> ItemKind {
                 .any(|child| return child.kind() == SyntaxKind::ITEM_LIST)
             {
                 return ItemKind::Major;
-            } else {
-                return ItemKind::Module;
             }
+            return ItemKind::Module;
         }
         SyntaxKind::USE | SyntaxKind::EXTERN_CRATE => return ItemKind::Import,
         SyntaxKind::CONST | SyntaxKind::STATIC => return ItemKind::Constant,
@@ -137,9 +134,8 @@ pub(crate) fn unit_kind(node: &SyntaxNode) -> UnitKind {
 
             if assignment {
                 return UnitKind::Assignment;
-            } else {
-                return UnitKind::Expression;
             }
+            return UnitKind::Expression;
         }
         _ => return UnitKind::Expression,
     }

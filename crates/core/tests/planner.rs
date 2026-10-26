@@ -1,7 +1,7 @@
 //! Behavioral regression tests for spacing policy.
 
 use rust_statement_spacing_core::config::{
-    Expressions, GuardChain, Overflow, SelfFields, Separation, Tail,
+    Bindings, Expressions, GuardChain, Overflow, SelfFields, Separation, Tail,
 };
 use rust_statement_spacing_core::*;
 use std::collections::BTreeSet;
@@ -48,7 +48,11 @@ fn model(kinds: &[UnitKind], semantics: &[Facts], blanks: &[usize]) -> (String, 
 
         let start = source.len();
 
-        let _ = write!(source, "unit{index};");
+        assert_eq!(
+            write!(source, "unit{index};"),
+            Ok(()),
+            "writing to a String cannot fail"
+        );
         let range = ByteRange::new(start, source.len());
         units.push(Unit {
             range,
@@ -1106,21 +1110,22 @@ fn receiver_group_keeps_local_flag_check_with_closing_operation() -> Result<(), 
     reason = "assertions define the test failure boundary and Result propagates setup errors"
 )]
 fn explicit_return_honors_producer_and_tail_policy() -> Result<(), Box<dyn Error>> {
-    for (input, tail, separated) in [
-        ("result", Tail::Smart, false),
-        ("other", Tail::Smart, true),
-        ("result", Tail::AlwaysSeparate, true),
-        ("other", Tail::Preserve, false),
+    for (input, tail, existing_blank, separated) in [
+        ("result", Tail::Smart, 0, false),
+        ("other", Tail::Smart, 0, true),
+        ("result", Tail::AlwaysSeparate, 0, true),
+        ("other", Tail::Preserve, 1, true),
     ] {
-        let (source, initial) = model(
+        let (source, mut initial) = model(
             &[UnitKind::Let, UnitKind::Let, UnitKind::Exit],
             &[
                 facts(&["first"], &[]),
                 facts(&["result"], &[]),
                 facts(&[], &[input]),
             ],
-            &[0, 0],
+            &[0, existing_blank],
         );
+        initial.lists[0].units[2].shape.form = Form::Value;
 
         let mut config = Config::default();
         config.exits.short_block_max_statements = 2;
@@ -1165,6 +1170,32 @@ fn plain_mutation_cleanup_honors_explicit_policy() -> Result<(), Box<dyn Error>>
         assert_eq!(output.contains("unit1;\n\n    unit2;"), separated);
     }
 
+    for (tail, mutated, findings) in [
+        (Tail::Smart, false, 1),
+        (Tail::Smart, true, 0),
+        (Tail::Visual, false, 0),
+        (Tail::Visual, true, 0),
+    ] {
+        let mut operation = facts(&[], &["value"]);
+        if mutated {
+            operation.writes = places(&["value"]);
+        }
+        let (source, mut initial) = model(
+            &[UnitKind::Expression, UnitKind::Exit],
+            &[operation, facts(&[], &["value"])],
+            &[0],
+        );
+        initial.lists[0].units[1].shape.form = Form::Value;
+        let mut config = Config::only(&[Rule::Exit]);
+        config.exits.short_block_max_statements = 0;
+        config.exits.tail = tail;
+        assert_eq!(
+            count(&config, &source, &initial)?,
+            findings,
+            "{tail:?}, mutated={mutated}"
+        );
+    }
+
     return Ok(());
 }
 
@@ -1179,12 +1210,16 @@ fn receiver_group_and_tail_constraints_remain_idempotent() -> Result<(), Box<dyn
     let mut control = facts(&[], &["panel", "buffer"]);
     control.known = false;
     control.header_reads = places(&["panel", "buffer"]);
+    control.mutating_receivers = places(&["buffer"]);
     let (source, mut initial) = model(
         &[UnitKind::Expression, UnitKind::Let, UnitKind::Control],
         &[receiver, facts(&["buffer"], &["source"]), control],
         &[0, 0],
     );
     initial.lists[0].units[2].is_tail = true;
+    initial.lists[0].units[1].shape.mutable = true;
+    initial.lists[0].units[1].shape.form = Form::Method;
+    initial.lists[0].units[2].shape.form = Form::Conditional;
 
     for (tail, expected) in [
         (Tail::Smart, source.as_str()),
@@ -1502,6 +1537,70 @@ fn completion_after_a_loop_honors_explicit_policy() -> Result<(), Box<dyn Error>
         config.exits.tail = Tail::Smart;
         config.grouping.expressions = Expressions::Strict;
         assert_eq!(count(&config, &source, &initial)?, 1);
+    }
+
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary"
+)]
+fn guard_checking_only_its_setup_stays_but_additional_state_separates() -> Result<(), Box<dyn Error>>
+{
+    for (header, findings) in [(vec!["fresh"], 0), (vec!["fresh", "elsewhere"], 1)] {
+        let setup = facts(&["fresh"], &[]);
+        let mut guard = facts(&[], &[]);
+        guard.header_reads = places(&header);
+        let (source, mut initial) =
+            model(&[UnitKind::Let, UnitKind::Control], &[setup, guard], &[0]);
+        initial.lists[0].units[1].is_guard = true;
+        initial.lists[0].units[1].shape.exiting_guard = true;
+        assert_eq!(count(&Config::default(), &source, &initial)?, findings);
+    }
+
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn call_runs_require_enabled_resolved_identity() -> Result<(), Box<dyn Error>> {
+    let reset = |name: &str| {
+        let mut facts = facts(&[], &[]);
+        facts.direct_callees = BTreeSet::from([format!("DefId(0:1 ~ krate::helpers::{name}")]);
+        return facts;
+    };
+    let mut config = Config::default();
+    config.grouping.bindings = Bindings::Multiline;
+    config.grouping.expressions = Expressions::Multiline;
+    config.grouping.join_related = true;
+    for same_callee in [false, true] {
+        config.grouping.same_callee = same_callee;
+        for (first, second, identical) in [
+            ("emit", "emit", true),
+            ("left::emit", "right::emit", false),
+            ("reset_cache_size", "reset_cache_limit", false),
+            ("flush_buffer", "close_buffer", false),
+        ] {
+            let (source, mut initial) = model(
+                &[UnitKind::Expression, UnitKind::Expression],
+                &[reset(first), reset(second)],
+                &[0],
+            );
+            for unit in &mut initial.lists[0].units {
+                unit.shape.form = Form::Call;
+                unit.shape.role = StatementRole::FunctionCall;
+            }
+            assert_eq!(
+                count(&config, &source, &initial)?,
+                usize::from(!(same_callee && identical)),
+                "same_callee={same_callee}, {first}, {second}",
+            );
+        }
     }
 
     return Ok(());

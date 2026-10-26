@@ -6,8 +6,12 @@ use super::decisions::{
 use super::guard_pair;
 use super::visual;
 use crate::config::{Bindings, Config, Expressions, GuardChain, Overflow, UseIn};
-use crate::model::{Form, Rule, RuleMask, UnitKind, UnitList};
-use crate::relations::{Relationship, control_inputs, intersects, outputs, relationship};
+use crate::model::{Form, Rule, RuleMask, Scope, Unit, UnitKind, UnitList};
+use crate::relations::{
+    Relationship, control_inputs, header_covered_by, intersects, outputs, relationship,
+    unique_feeder_before,
+};
+use std::collections::BTreeSet;
 
 pub(super) fn apply(
     config: &Config,
@@ -18,7 +22,7 @@ pub(super) fn apply(
     decisions: &mut [Option<Decision>],
 ) {
     attach_preparation(config, source, global_rules, list, decisions);
-    attach_accumulators(config, source, global_rules, list, decisions);
+    attach_accumulators(config, source, global_rules, list, cohesive, decisions);
 
     // Monotone closure: optional joins can strengthen into required separators.
     // Reconsider affected groups before exposing edits, not on a later fix pass.
@@ -118,11 +122,28 @@ pub(super) fn apply(
                         && gap_unit.shape.form == Form::Literal
                         && gap_unit.shape.mutable
                         && scalar_count == 1
+                        && !split_accumulator_run(config, list, unit, control - start, control)
                     {
                         gap.saturating_sub(1)
                     } else {
                         gap
                     };
+                    let feeds_loop = config.grouping.max_before_control != 0
+                        && boundary == gap
+                        && list.units.get(boundary).is_some_and(|before| {
+                            return list.units.get(boundary + 1).is_some_and(|after| {
+                                let mut mutated = after.facts.writes.clone();
+                                mutated.extend(after.facts.mutating_receivers.iter().cloned());
+                                return intersects(
+                                    &before.facts.definitions,
+                                    &mutated,
+                                    config.grouping.self_fields,
+                                );
+                            });
+                        });
+                    if feeds_loop {
+                        continue;
+                    }
 
                     changed |= put(
                         global_rules,
@@ -238,7 +259,32 @@ pub(super) fn apply(
                 accepted_start = candidate;
             }
 
-            if unknown && accepted_start == control && config.grouping.max_before_control != 0 {
+            let unrelated_despite_unknown = unknown
+                && accepted_start == control
+                && gap_unit.facts.known
+                && outputs(&gap_unit.facts).is_empty()
+                && gap_unit.facts.receivers.is_empty()
+                && unit.facts.captures.is_empty()
+                && !intersects(
+                    &gap_unit.facts.reads,
+                    &unit.facts.header_reads,
+                    config.grouping.self_fields,
+                )
+                && !intersects(
+                    &gap_unit.facts.reads,
+                    &unit.facts.first_body_reads,
+                    config.grouping.self_fields,
+                )
+                && !intersects(
+                    &gap_unit.facts.reads,
+                    &unit.facts.captures,
+                    config.grouping.self_fields,
+                );
+            if unknown
+                && accepted_start == control
+                && config.grouping.max_before_control != 0
+                && !unrelated_despite_unknown
+            {
                 continue;
             }
 
@@ -258,10 +304,23 @@ pub(super) fn apply(
             let total = control - group_start;
             let related = control - accepted_start;
             let limit = config.grouping.max_before_control;
-            let boundary = match config.grouping.overflow {
+            let mut boundary = match config.grouping.overflow {
                 Overflow::WholeGroup => {
-                    if related != total || total > limit {
-                        let accumulators = control - accumulator_start;
+                    if unit.is_guard && unit.shape.exiting_guard && related == total {
+                        None
+                    } else if related != total || total > limit {
+                        let split = split_accumulator_run(
+                            config,
+                            list,
+                            unit,
+                            control - accumulator_start,
+                            control,
+                        );
+                        let accumulators = if split {
+                            0
+                        } else {
+                            control - accumulator_start
+                        };
                         let retained = if config.grouping.bindings == Bindings::Multiline
                             && accumulators > limit
                         {
@@ -292,6 +351,27 @@ pub(super) fn apply(
                     }
                 }
             };
+            let lone_setup = control - accepted_start == 1
+                && gap_unit.kind == UnitKind::Let
+                && source
+                    .get(gap_unit.code_range.as_range())
+                    .is_some_and(|text| return !text.contains('\n'));
+            let conditional_split = boundary.is_none()
+                && config.grouping.bindings != Bindings::Preserve
+                && matches!(unit.shape.form, Form::Conditional | Form::CallCheck)
+                && !(unit.is_guard && unit.shape.exiting_guard)
+                && lone_setup
+                && !header_covered_by(
+                    &gap_unit.facts.definitions,
+                    &unit.facts.header_reads,
+                    config.grouping.self_fields,
+                );
+            let traversal_split = boundary.is_none()
+                && substantial_loop(config, list, unit)
+                && accumulator_start == control - 1;
+            if conditional_split || traversal_split {
+                boundary = Some(gap);
+            }
 
             if config.grouping.join_related
                 && config.grouping.bindings != Bindings::Preserve
@@ -300,6 +380,7 @@ pub(super) fn apply(
                 && accumulator_start < control
                 && limit > 0
                 && boundary != Some(gap)
+                && !substantial_loop(config, list, unit)
                 && list.gaps.get(gap).is_some_and(|gap| return gap.joinable)
             {
                 changed |= put(
@@ -417,11 +498,56 @@ fn attach_preparation(
     }
 }
 
+fn substantial_loop(config: &Config, list: &UnitList, unit: &Unit) -> bool {
+    return unit.shape.form == Form::Loop
+        && unit
+            .shape
+            .loop_body_statements
+            .is_some_and(|count| return count > 1)
+        && (list.executable_count > config.exits.short_block_max_statements
+            || list.scope != Scope::Ordinary);
+}
+
+fn split_accumulator_run(
+    config: &Config,
+    list: &UnitList,
+    unit: &Unit,
+    run_len: usize,
+    control: usize,
+) -> bool {
+    if !substantial_loop(config, list, unit) {
+        return false;
+    }
+    if run_len <= 1
+        && unit
+            .shape
+            .loop_body_statements
+            .is_some_and(|count| return count <= 2)
+        && unit.shape.test_statements.is_some()
+        && list
+            .units
+            .get(control.saturating_sub(run_len))
+            .is_some_and(|setup| {
+                return setup.kind == UnitKind::Let
+                    && setup.shape.mutable
+                    && matches!(setup.shape.form, Form::Literal | Form::Value | Form::Call);
+            })
+    {
+        return false;
+    }
+    return run_len <= 1
+        || unit
+            .shape
+            .loop_body_statements
+            .is_some_and(|count| return count > 2);
+}
+
 fn attach_accumulators(
     config: &Config,
     source: &str,
     global_rules: RuleMask,
     list: &UnitList,
+    cohesive: &[bool],
     decisions: &mut [Option<Decision>],
 ) {
     if config.grouping.max_before_control == 0
@@ -436,7 +562,12 @@ fn attach_accumulators(
     }
 
     for (control, unit) in list.units.iter().enumerate() {
-        if unit.kind != UnitKind::Control {
+        if unit.kind != UnitKind::Control
+            || control
+                .checked_sub(1)
+                .and_then(|gap| return cohesive.get(gap))
+                == Some(&true)
+        {
             continue;
         }
 
@@ -475,27 +606,82 @@ fn attach_accumulators(
 
             start = candidate;
         }
-
-        // Treat up to four compact initializations as one population step.
-        // Larger setup phases continue to obey the ordinary overflow policy.
         if start == control || control - start > 4 {
             continue;
         }
 
-        for gap in start..control {
-            put(
-                global_rules,
-                list,
-                decisions,
-                gap,
-                join(
-                    Rule::ControlFlow,
-                    "keep fresh accumulators with the control flow that fills them",
-                ),
-            );
+        let attach = !split_accumulator_run(config, list, unit, control - start, control)
+            && (unit.shape.form == Form::Loop
+                || control - start > 1
+                || list.units.get(start..control).is_some_and(|run| {
+                    let mut definitions = BTreeSet::new();
+                    for setup in run {
+                        definitions.extend(setup.facts.definitions.iter().cloned());
+                    }
+                    return header_covered_by(
+                        &definitions,
+                        &unit.facts.header_reads,
+                        config.grouping.self_fields,
+                    );
+                }));
+        if attach {
+            for gap in start..control {
+                put(
+                    global_rules,
+                    list,
+                    decisions,
+                    gap,
+                    join(
+                        Rule::ControlFlow,
+                        "keep fresh accumulators with the control flow that fills them",
+                    ),
+                );
+            }
+        } else {
+            for gap in start..control - 1 {
+                put(
+                    global_rules,
+                    list,
+                    decisions,
+                    gap,
+                    join(
+                        Rule::ControlFlow,
+                        "keep fresh accumulators with the control flow that fills them",
+                    ),
+                );
+            }
+            if control > 0 {
+                put(
+                    global_rules,
+                    list,
+                    decisions,
+                    control - 1,
+                    separate(
+                        Rule::ControlFlow,
+                        90,
+                        "separate this traversal from its accumulator setup",
+                    ),
+                );
+            }
         }
 
+        let prev_is_accumulator = start > 0
+            && list.units.get(start - 1).is_some_and(|prev| {
+                return prev.kind == UnitKind::Let
+                    && !prev.shape.fallible
+                    && prev.facts.known
+                    && ((prev.shape.mutable && prev.shape.form == Form::Literal)
+                        || matches!(prev.shape.form, Form::Value)
+                        || ((matches!(prev.shape.form, Form::Call | Form::Method))
+                            && source.get(prev.code_range.as_range()).is_some_and(|text| {
+                                return !text.contains('\n') && text.contains('(');
+                            })));
+            });
+        let prev_feeds_run =
+            start > 0 && unique_feeder_before(&list.units, start - 1, config.grouping.self_fields);
         if start > 0
+            && !prev_is_accumulator
+            && !prev_feeds_run
             && list
                 .units
                 .get(start - 1)

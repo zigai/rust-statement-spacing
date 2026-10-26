@@ -4,8 +4,12 @@ use super::decisions::{Decision, blocked, enabled, join, optional_join, put, sep
 use super::guard_pair;
 use super::visual;
 use crate::config::{Bindings, Config, Expressions, GuardChain, ImmediateCheck, Separation, Tail};
-use crate::model::{Form, ItemKind, Rule, RuleMask, UnitKind, UnitList};
-use crate::relations::{Relationship, direct_producer, intersects, outputs, relationship};
+use crate::model::{Form, ItemKind, Rule, RuleMask, StatementRole, UnitKind, UnitList};
+use crate::relations::{
+    Relationship, direct_producer, header_covered_by, intersects, merges_flows, outputs,
+    relationship,
+};
+use std::collections::BTreeSet;
 
 pub(super) fn apply(
     config: &Config,
@@ -46,7 +50,7 @@ pub(super) fn apply(
             );
         }
 
-        if config.grouping.max_before_control > 0
+        let rejection_gate = config.grouping.max_before_control > 0
             && config.grouping.bindings != Bindings::Preserve
             && !matches!(
                 config.grouping.expressions,
@@ -60,13 +64,13 @@ pub(super) fn apply(
             && source
                 .get(a.code_range.as_range())
                 .is_some_and(|text| return !text.contains('\n'))
-            && b.shape.form != Form::CallCheck
-            && intersects(
-                &a.facts.definitions,
-                &b.facts.header_reads,
-                config.grouping.self_fields,
-            )
-        {
+            && b.shape.form != Form::CallCheck;
+        let covered = header_covered_by(
+            &a.facts.definitions,
+            &b.facts.header_reads,
+            config.grouping.self_fields,
+        );
+        if rejection_gate && covered {
             put(
                 global_rules,
                 list,
@@ -75,6 +79,18 @@ pub(super) fn apply(
                 join(
                     Rule::ControlFlow,
                     "keep this operation with its immediate rejection check",
+                ),
+            );
+        } else if rejection_gate && a.facts.known && b.facts.known && !covered {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                separate(
+                    Rule::ControlFlow,
+                    60,
+                    "separate this guard from setup it does not directly check",
                 ),
             );
         }
@@ -110,6 +126,228 @@ pub(super) fn apply(
                     Rule::ControlFlow,
                     "keep an action with its conditional repeat",
                 ),
+            );
+        }
+
+        let fresh_after_check = a.kind == UnitKind::Expression
+            && a.shape.fallible
+            && a.facts.definitions.is_empty()
+            && a.facts.writes.is_empty()
+            && a.facts.mutating_receivers.is_empty()
+            && !a.facts.reads.is_empty()
+            && (a.shape.error_handler.is_none()
+                || b.shape.error_handler.is_none()
+                || a.shape.error_handler != b.shape.error_handler)
+            && b.kind == UnitKind::Let
+            && !matches!(b.shape.form, Form::Branch | Form::Conditional | Form::Loop)
+            && !intersects(&a.facts.reads, &b.facts.reads, config.grouping.self_fields)
+            && !intersects(
+                &a.facts.reads,
+                &b.facts.receivers,
+                config.grouping.self_fields,
+            )
+            && !intersects(
+                &a.facts.receivers,
+                &b.facts.receivers,
+                config.grouping.self_fields,
+            );
+        if fresh_after_check {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                separate(Rule::Bindings, 100, "start a new phase after this check"),
+            );
+        }
+
+        let compact_exit = matches!(config.exits.tail, Tail::Smart | Tail::Visual);
+        let retry_continue = compact_exit
+            && config.exits.attached_loop_exit
+            && b.kind == UnitKind::Exit
+            && source
+                .get(b.code_range.as_range())
+                .is_some_and(|text| return text.trim() == "continue;")
+            && a.kind == UnitKind::Expression;
+        if retry_continue {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                join(Rule::Exit, "keep this retry-continue with its step"),
+            );
+        }
+
+        let ok_close = compact_exit
+            && b.kind == UnitKind::Exit
+            && b.facts.reads.is_empty()
+            && a.kind.ordinary()
+            && !a.shape.fallible
+            && source
+                .get(b.code_range.as_range())
+                .is_some_and(|text| return text.trim() == "return Ok(());");
+        if ok_close {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                join(Rule::Exit, "keep this trivial close with its step"),
+            );
+        }
+
+        let unpack = b.kind == UnitKind::Let
+            && a.kind.ordinary()
+            && source.get(b.code_range.as_range()).is_some_and(|text| {
+                let head = text.trim_start();
+                return head.starts_with("let (")
+                    || head.starts_with("let [")
+                    || head.starts_with("let mut (")
+                    || head.starts_with("let mut [");
+            })
+            && !b.facts.reads.is_empty()
+            && header_covered_by(
+                &a.facts.definitions,
+                &b.facts.reads,
+                config.grouping.self_fields,
+            );
+        if unpack {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                join(Rule::Bindings, "keep this unpacking with its production"),
+            );
+        }
+
+        if visual::bool_flag_run(source, a, b) {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                join(Rule::Bindings, "keep this flag derivation with its run"),
+            );
+        }
+
+        fn ignored_argless_method(text: &str) -> bool {
+            let head = text.trim_start();
+            let Some(call) = head.strip_prefix("let _ = ") else {
+                return false;
+            };
+            let call = call.trim_end_matches(';').trim_end();
+            return call.contains('.')
+                && call.ends_with("()")
+                && call.chars().filter(|mark| return *mark == '(').count() == 1;
+        }
+        let cleanup_call = b.kind == UnitKind::Let
+            && a.kind.ordinary()
+            && a.shape.role != StatementRole::Assertion
+            && source.get(a.code_range.as_range()).is_some_and(|text| {
+                return !text.trim_start().starts_with("drop(");
+            })
+            && source
+                .get(b.code_range.as_range())
+                .is_some_and(ignored_argless_method);
+        if cleanup_call {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                join(Rule::Bindings, "keep this ignored cleanup with its step"),
+            );
+        }
+
+        let ignored_emit = b.kind == UnitKind::Let
+            && a.kind.ordinary()
+            && a.shape.role != StatementRole::Assertion
+            && intersects(
+                &a.facts.definitions,
+                &b.facts.reads,
+                config.grouping.self_fields,
+            )
+            && source.get(b.code_range.as_range()).is_some_and(|text| {
+                let head = text.trim_start();
+                return head.starts_with("let _ = write!(")
+                    || head.starts_with("let _ = writeln!(")
+                    || head.starts_with("let _ = eprint!(")
+                    || head.starts_with("let _ = eprintln!(")
+                    || head.starts_with("let _ = print!(")
+                    || head.starts_with("let _ = println!(");
+            });
+        if ignored_emit {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                join(Rule::Bindings, "keep this ignored emit with its step"),
+            );
+        }
+
+        let mut step_places = outputs(&a.facts);
+        if config.exits.tail == Tail::Visual {
+            step_places.extend(a.facts.reads.iter().cloned());
+        }
+        let passthrough = compact_exit
+            && b.kind == UnitKind::Exit
+            && a.kind.ordinary()
+            && (matches!(b.shape.form, Form::Literal)
+                || (b.shape.form == Form::Value
+                    && source.get(b.code_range.as_range()).is_some_and(|text| {
+                        let body = text.trim();
+                        return body.starts_with("return Error::")
+                            || (!body.contains(['{', '[', '('])
+                                && (b.facts.reads.is_empty()
+                                    || header_covered_by(
+                                        &step_places,
+                                        &b.facts.reads,
+                                        config.grouping.self_fields,
+                                    )));
+                    })));
+        if passthrough {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                join(Rule::Exit, "keep this value passthrough with its step"),
+            );
+        }
+
+        let tail_call = compact_exit
+            && b.kind == UnitKind::Exit
+            && matches!(b.shape.form, Form::Call | Form::Method)
+            && a.kind.ordinary()
+            && !b.facts.reads.is_empty()
+            && source.get(b.code_range.as_range()).is_some_and(|text| {
+                if text.contains('{') {
+                    return false;
+                }
+                let trimmed = text.trim();
+                if let Some(inner) = trimmed
+                    .strip_prefix("return Ok(")
+                    .and_then(|tail| return tail.strip_suffix(");"))
+                    && inner.contains('(')
+                {
+                    return false;
+                }
+                return header_covered_by(
+                    &step_places,
+                    &b.facts.reads,
+                    config.grouping.self_fields,
+                );
+            });
+        if tail_call {
+            put(
+                global_rules,
+                list,
+                decisions,
+                i,
+                join(Rule::Exit, "keep this tail call with its step"),
             );
         }
     }
@@ -265,13 +503,53 @@ pub(super) fn apply(
                         config.grouping.self_fields,
                     )));
 
-        let visual_tail = config.exits.tail == Tail::Visual && visual::compact_tail(list, a, b);
+        let visual_tail =
+            config.exits.tail == Tail::Visual && visual::compact_tail(config, source, list, a, b);
+        let mut earlier = BTreeSet::new();
+        for unit in list.units.iter().take(i) {
+            earlier.extend(unit.facts.definitions.iter().cloned());
+        }
+        let echoes_input = a.shape.fallible
+            && intersects(
+                &a.facts.definitions,
+                &b.facts.reads,
+                config.grouping.self_fields,
+            )
+            && b.facts.reads.iter().any(|read| {
+                return intersects(
+                    &a.facts.reads,
+                    &BTreeSet::from([read.clone()]),
+                    config.grouping.self_fields,
+                );
+            });
+        let delegates =
+            intersects(
+                &a.facts.definitions,
+                &b.facts.reads,
+                config.grouping.self_fields,
+            ) && (merges_flows(&a.facts, &b.facts, &earlier, config.grouping.self_fields)
+                || echoes_input);
+        let failure_report = source.get(b.code_range.as_range()).is_some_and(|text| {
+            return text.trim_start().starts_with("return Err(") && text.contains('{');
+        }) && list.units.iter().any(|unit| {
+            return intersects(
+                &unit.facts.definitions,
+                &b.facts.reads,
+                config.grouping.self_fields,
+            );
+        });
+        let continues_step = intersects(
+            &a.facts.definitions,
+            &b.facts.reads,
+            config.grouping.self_fields,
+        ) && !failure_report
+            && !delegates;
         let exit = b.kind == UnitKind::Exit
             && !cleanup_exit
             && !attached_exit
             && match config.exits.tail {
                 Tail::AlwaysSeparate => true,
-                Tail::Visual => !visual_tail,
+                Tail::Visual => !visual_tail && !continues_step,
                 Tail::Preserve => false,
                 Tail::Smart => {
                     long && !completion
@@ -286,7 +564,7 @@ pub(super) fn apply(
             && !attached_exit
             && match config.exits.tail {
                 Tail::AlwaysSeparate => true,
-                Tail::Visual => !visual_tail,
+                Tail::Visual => !visual_tail && !continues_step,
                 Tail::Preserve => false,
                 Tail::Smart => {
                     long && !completion
@@ -346,18 +624,20 @@ pub(super) fn apply(
                 || b.kind == UnitKind::UnsafeBlock
                 || relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Related);
 
+        let attaches_after_block = (config.grouping.join_related
+            && visual::guard_continuation(a, b))
+            || completion_exit
+            || visual_tail
+            || guards
+            || guard_continuation
+            || unsafe_continuation
+            || data_continuation
+            || receiver_continuation
+            || drain_chain
+            || cleanup_exit
+            || cohesive.get(i) == Some(&true);
         if a.kind.ends_block()
-            && !(config.grouping.join_related && visual::guard_continuation(a, b))
-            && !completion_exit
-            && !visual_tail
-            && !guards
-            && !guard_continuation
-            && !unsafe_continuation
-            && !data_continuation
-            && !receiver_continuation
-            && !drain_chain
-            && !cleanup_exit
-            && cohesive.get(i) != Some(&true)
+            && !attaches_after_block
             && config.control_flow.after_block == Separation::Separate
         {
             put(
@@ -401,7 +681,7 @@ pub(super) fn apply(
             } else {
                 config.grouping.expressions == Expressions::Multiline
             })
-            && visual::boundary(config, source, list, i)
+            && visual::boundary(config, source, list, i).is_some()
         {
             put(
                 global_rules,
@@ -422,15 +702,27 @@ pub(super) fn apply(
             continue;
         }
 
+        let fixture_assembly = b.kind == UnitKind::Let
+            && b.facts.reads.is_empty()
+            && source
+                .get(a.code_range.as_range())
+                .is_none_or(|text| return !text.contains('\n'))
+            && !a.shape.fallible
+            && a.kind != UnitKind::Control;
         if config.grouping.bindings == Bindings::Multiline
             && a.kind.is_binding()
             && b.shape.form == Form::Macro
-            && !b.facts.reads.is_empty()
-            && !intersects(
+            && b.shape.role != StatementRole::Assertion
+            && !matches!(a.shape.form, Form::LetElse)
+            && !fixture_assembly
+            && (!intersects(
                 &a.facts.definitions,
                 &b.facts.reads,
                 config.grouping.self_fields,
-            )
+            ) && (!b.facts.reads.is_empty() || !b.shape.fallible)
+                || source
+                    .get(a.code_range.as_range())
+                    .is_some_and(|text| return text.contains('\n')))
         {
             put(
                 global_rules,
@@ -454,49 +746,43 @@ pub(super) fn apply(
         }
 
         if a.kind.is_binding() && b.kind.is_binding() {
-            let required = match config.grouping.bindings {
-                Bindings::Consecutive | Bindings::Preserve => false,
-                Bindings::SameKind => a.kind != b.kind,
+            let reason = match config.grouping.bindings {
+                Bindings::Consecutive | Bindings::Preserve => None,
+                Bindings::SameKind => (a.kind != b.kind).then_some("separate these binding phases"),
                 Bindings::Multiline => visual::boundary(config, source, list, i),
-                Bindings::Related => {
-                    relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Unrelated
-                }
+                Bindings::Related => (relationship(&a.facts, &b.facts, &config.grouping)
+                    == Relationship::Unrelated)
+                    .then_some("separate these binding phases"),
             };
 
-            if required {
+            if let Some(reason) = reason {
                 put(
                     global_rules,
                     list,
                     decisions,
                     i,
-                    separate(Rule::Bindings, 30, "separate these binding phases"),
+                    separate(Rule::Bindings, 30, reason),
                 );
             }
         } else {
-            let required = match config.grouping.expressions {
-                Expressions::Preserve => false,
-                Expressions::Strict => true,
+            let reason = match config.grouping.expressions {
+                Expressions::Preserve => None,
+                Expressions::Strict => Some("separate these operation phases"),
                 Expressions::Multiline => visual::boundary(config, source, list, i),
-                Expressions::Related => {
-                    relationship(&a.facts, &b.facts, &config.grouping) == Relationship::Unrelated
-                        && !visual::related_join(config, source, a, b)
-                }
+                Expressions::Related => (relationship(&a.facts, &b.facts, &config.grouping)
+                    == Relationship::Unrelated
+                    && !visual::related_join(config, source, a, b))
+                .then_some("separate these operation phases"),
             };
 
-            if required {
+            if let Some(reason) = reason {
                 let rule = if a.kind.is_binding() || b.kind.is_binding() {
                     Rule::Bindings
                 } else {
                     Rule::Expressions
                 };
 
-                put(
-                    global_rules,
-                    list,
-                    decisions,
-                    i,
-                    separate(rule, 30, "separate these operation phases"),
-                );
+                put(global_rules, list, decisions, i, separate(rule, 30, reason));
             }
         }
     }

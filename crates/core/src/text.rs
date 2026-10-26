@@ -67,8 +67,7 @@ impl SourceText {
     pub fn original_newlines(&self, replacement: &str) -> String {
         if self.crlf {
             return replacement.replace('\n', "\r\n");
-        } else {
-            return replacement.to_string();
         }
+        return replacement.to_string();
     }
 }

@@ -83,6 +83,7 @@ fn names_check(content: &[String]) {
 fn rejection(candidates: &[u64], width: u64, threshold: u64) {
     for candidate in candidates {
         let product = u128::from(*candidate) * u128::from(width);
+
         if (product as u64) < threshold {
             continue;
         }
@@ -110,6 +111,7 @@ struct Entry {
 fn parallel_fields(entry: &Entry) -> Option<usize> {
     let key = entry.key.trim();
     let value = entry.value.trim();
+
     if key.is_empty() && value.is_empty() {
         return None;
     }
@@ -130,6 +132,7 @@ fn validate_name(value: &str) -> Result<(), ()> {
 
 fn validators(target: &str, name: &str) -> Result<(), ()> {
     validate_target(target)?;
+
     validate_name(name)?;
 
     Ok(())

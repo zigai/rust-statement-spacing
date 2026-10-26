@@ -49,3 +49,20 @@ fn unknown_procedural_attribute_is_protected() -> Result<(), Box<dyn Error>> {
 
     return Ok(());
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
+fn derive_helpers_do_not_protect_but_skip_still_does() -> Result<(), Box<dyn Error>> {
+    let helper = "use uuid::Uuid;\n/// Doc.\n#[derive(Clone, Debug)]\n#[serde(rename_all = \"snake_case\")]\nenum E {\n    A,\n}\n";
+    let spaced = "use uuid::Uuid;\n\n/// Doc.\n#[derive(Clone, Debug)]\n#[serde(rename_all = \"snake_case\")]\nenum E {\n    A,\n}\n";
+    assert_eq!(structural(helper, &strict())?.0, spaced);
+    let skipped = "#[derive(Clone)]\n#[rustfmt::skip]\nfn f() {\n    one();two();\n}\n";
+    assert_eq!(structural(skipped, &strict())?.0, skipped);
+    let transformed = "#[derive(Clone)]\n#[some_transform]\nfn f() {\n    one();\n    two();\n}\n";
+    assert_eq!(structural(transformed, &strict())?.0, transformed);
+
+    return Ok(());
+}

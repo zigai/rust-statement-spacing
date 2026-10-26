@@ -2,7 +2,7 @@ use crate::units::{
     control_body_start, deferred_ranges, expression_node, is_expression, is_item, is_unit, range,
 };
 use ra_ap_syntax::{
-    AstNode, SyntaxKind, SyntaxNode,
+    AstNode, Edition, SyntaxKind, SyntaxNode,
     ast::{self, HasArgList as _},
 };
 use rust_statement_spacing_core::{ByteRange, Form, Scope, Shape, StatementRole};
@@ -98,6 +98,76 @@ fn assertion(node: &SyntaxNode) -> bool {
     );
 }
 
+fn pins_value(root: &SyntaxNode) -> bool {
+    let call = ast::MacroCall::cast(root.clone())
+        .or_else(|| return root.children().find_map(ast::MacroCall::cast));
+    let Some(call) = call else {
+        return false;
+    };
+    if !call.path().is_some_and(|path| {
+        return matches!(
+            path.syntax().text().to_string().as_str(),
+            "assert_eq"
+                | "assert_ne"
+                | "std::assert_eq"
+                | "std::assert_ne"
+                | "core::assert_eq"
+                | "core::assert_ne"
+        );
+    }) {
+        return false;
+    }
+    let Some(tree) = call.token_tree() else {
+        return false;
+    };
+    let text = tree.syntax().text().to_string();
+    let Some(body) = text.get(1..text.len().saturating_sub(1)) else {
+        return false;
+    };
+    let arguments = format!("arguments({body})");
+    let Ok(ast::Expr::CallExpr(call)) = ast::Expr::parse(&arguments, Edition::Edition2024).ok()
+    else {
+        return false;
+    };
+    let Some(arguments) = call.arg_list() else {
+        return false;
+    };
+    let mut arguments = arguments.args();
+    let (Some(actual), Some(expected)) = (arguments.next(), arguments.next()) else {
+        return false;
+    };
+    let literal = match expected {
+        ast::Expr::Literal(_) => true,
+        ast::Expr::PrefixExpr(prefix) => {
+            prefix.op_kind() == Some(ast::UnaryOp::Neg)
+                && prefix
+                    .expr()
+                    .is_some_and(|value| return matches!(value, ast::Expr::Literal(_)))
+        }
+        _ => false,
+    };
+    return literal
+        && !actual
+            .syntax()
+            .descendants()
+            .any(|node| return ast::MethodCallExpr::can_cast(node.kind()))
+        && !is_size_named(&actual.syntax().text().to_string());
+}
+
+fn is_size_named(argument: &str) -> bool {
+    let stripped = argument.trim().trim_matches(|mark| {
+        return mark == '(' || mark == ')' || mark == '&' || mark == '*' || mark == ' ';
+    });
+    let tail = stripped.rsplit(['.', ':']).next().unwrap_or(stripped);
+    let name = tail.trim();
+    if name.is_empty() {
+        return false;
+    }
+    return ["len", "count", "counts", "byte", "bytes", "size", "entries"]
+        .iter()
+        .any(|word| return name == *word || name.ends_with(&format!("_{word}")));
+}
+
 fn extraction(node: &SyntaxNode) -> bool {
     match node.kind() {
         SyntaxKind::PATH_EXPR => return true,
@@ -165,6 +235,28 @@ pub(crate) fn test_statements(container: &SyntaxNode) -> Option<usize> {
                 .filter(|node| return !is_item(node) || assertion(node))
                 .count();
         });
+}
+
+fn loop_body_statements(expression: &SyntaxNode) -> Option<usize> {
+    if !matches!(
+        expression.kind(),
+        SyntaxKind::FOR_EXPR | SyntaxKind::WHILE_EXPR | SyntaxKind::LOOP_EXPR
+    ) {
+        return None;
+    }
+    let start = control_body_start(expression)?;
+    let body = expression.children().find(|child| {
+        return child.kind() == SyntaxKind::BLOCK_EXPR && range(child).start == start;
+    })?;
+    let list = body
+        .children()
+        .find(|child| return child.kind() == SyntaxKind::STMT_LIST)?;
+    return Some(
+        list.children()
+            .filter(is_unit)
+            .filter(|node| return !is_item(node))
+            .count(),
+    );
 }
 
 pub(crate) fn shape(node: &SyntaxNode) -> Shape {
@@ -238,6 +330,8 @@ pub(crate) fn shape(node: &SyntaxNode) -> Shape {
             });
 
     return Shape {
+        loop_body_statements: loop_body_statements(&expression),
+        pins_value: pins_value(&root),
         conditional_action: ast::IfExpr::cast(expression).and_then(|conditional| {
             if conditional.else_branch().is_some()
                 || conditional.condition()?.syntax().descendants().any(|node| {
