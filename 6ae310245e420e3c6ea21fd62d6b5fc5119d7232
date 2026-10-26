@@ -1,0 +1,2 @@
+- Validate the final batch at c51b82f94e25b36d47c8badcb4cf597e2cc52a95 with stamped just check using TMPDIR=/home/zigai/.cache/rust-statement-spacing-batch and CARGO_HOME=/home/zigai/.cargo: 173 Rust tests, 58 driver tests, Clippy, doctests, feature combinations, documentation, advisories, spelling, and formatting pass.
+- Exercise configured global excludes, repository info/exclude, nested workspace roots, ignored directory links, and replicas without Git metadata: scans preserve the same ignore policy and links cannot bypass it.
