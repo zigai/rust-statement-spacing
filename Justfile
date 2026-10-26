@@ -5,10 +5,11 @@ export RUSTDOCFLAGS := "-D warnings"
 _:
   @just help
 
-# Install required rustup components and fetch dependencies
+# Install required rustup components, fetch dependencies, and install pre-commit hooks
 setup:
   rustup component add clippy rustfmt
   cargo fetch
+  pre-commit install
 
 # Make a current stable toolchain available for compiling repository tools
 _stable-tools:
@@ -91,6 +92,10 @@ build:
 release:
   cargo build --workspace --all-features --release
 
+# Install the cargo-statement-spacing executable to ~/.cargo/bin
+install:
+  cargo install --locked --path crates/cli --force
+
 # Build API documentation and reject rustdoc warnings
 docs-check:
   cargo doc --workspace --all-features --no-deps
@@ -106,10 +111,6 @@ deny:
 spell:
   typos
 
-
-# Install the repository's pre-commit hooks
-hooks:
-  pre-commit install
 
 # Remove Cargo build artifacts
 clean:
@@ -133,9 +134,6 @@ help:
 
 alias fmt := format
 alias cov := coverage
-alias dev := setup
-alias qa := check
-alias test-fast := nextest
 
 # Test the native transaction driver with explicit Cargo process doubles
 test-driver:
