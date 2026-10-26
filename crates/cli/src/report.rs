@@ -20,7 +20,9 @@ pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, m
         })();
 
         if let Err(error) = result {
-            let _ = writeln!(io::stderr(), "could not write report: {error}");
+            // This is the terminal reporting boundary: stderr failure cannot be
+            // reported recursively, and the report failure already sets exit code 2.
+            drop(writeln!(io::stderr(), "could not write report: {error}"));
             code = 2;
         }
     }
@@ -29,7 +31,12 @@ pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, m
         match serde_json::to_string_pretty(report) {
             Ok(report) => println!("{report}"),
             Err(error) => {
-                let _ = writeln!(io::stderr(), "could not serialize report: {error}");
+                // Stderr is best-effort at this terminal boundary; serialization
+                // failure still returns exit code 2 even if stderr is unavailable.
+                drop(writeln!(
+                    io::stderr(),
+                    "could not serialize report: {error}"
+                ));
 
                 return 2;
             }
@@ -50,7 +57,9 @@ pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, m
         }
 
         if let Some(error) = report["error"].as_str() {
-            let _ = writeln!(io::stderr(), "{error}");
+            // The workflow has already selected the failure exit code. At this
+            // terminal boundary there is no further sink for a stderr failure.
+            drop(writeln!(io::stderr(), "{error}"));
         }
 
         if let Some(diff) = report["diff"].as_str() {

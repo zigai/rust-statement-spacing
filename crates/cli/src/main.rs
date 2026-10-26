@@ -14,6 +14,7 @@ use clap::Parser;
 use clap::error::ErrorKind;
 use std::env;
 use std::error::Error as StdError;
+use std::fmt::{self, Display, Formatter};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -26,6 +27,35 @@ pub(crate) type Result<T, E = Error> = StdResult<T, E>;
 
 pub(crate) fn failure(message: impl Into<String>) -> Error {
     return io::Error::other(message.into()).into();
+}
+
+#[derive(Debug)]
+struct ContextError<E> {
+    message: String,
+    source: E,
+}
+
+impl<E> Display for ContextError<E> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        return f.write_str(&self.message);
+    }
+}
+
+impl<E: StdError + 'static> StdError for ContextError<E> {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        return Some(&self.source);
+    }
+}
+
+pub(crate) fn failure_with_source(
+    message: impl Into<String>,
+    source: impl StdError + Send + Sync + 'static,
+) -> Error {
+    return io::Error::other(ContextError {
+        message: message.into(),
+        source,
+    })
+    .into();
 }
 
 #[derive(Parser)]
@@ -210,4 +240,25 @@ fn execute(options: Options) -> ExitCode {
         driver.toolchain.as_deref(),
         code,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    #[test]
+    fn contextual_failures_preserve_display_kind_and_typed_source() {
+        let source = serde_json::from_str::<Value>("{").expect_err("incomplete JSON must fail");
+        let error = failure_with_source("invalid cargo locate-project output", source);
+        assert_eq!(error.to_string(), "invalid cargo locate-project output");
+        assert!(matches!(
+            error.downcast_ref::<io::Error>(),
+            Some(error) if error.kind() == io::ErrorKind::Other
+        ));
+        assert!(matches!(
+            error.source(),
+            Some(source) if source.is::<serde_json::Error>()
+        ));
+    }
 }

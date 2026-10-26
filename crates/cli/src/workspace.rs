@@ -1,4 +1,4 @@
-use crate::{Result, failure};
+use crate::{Result, failure, failure_with_source};
 use globset::{GlobBuilder, GlobMatcher};
 #[cfg(unix)]
 use rustix::fs::{Mode, OFlags, open};
@@ -205,11 +205,14 @@ fn file_mode(_info: &fs::Metadata) -> u32 {
 
 pub(crate) fn relative_path(root: &Path, name: &Path) -> Result<(PathBuf, String)> {
     let path = canonical(&root.join(name))?;
-    let relative = path.strip_prefix(root).map_err(|_| {
-        return failure(format!(
-            "source path is outside the supported workspace: {}",
-            path.display()
-        ));
+    let relative = path.strip_prefix(root).map_err(|error| {
+        return failure_with_source(
+            format!(
+                "source path is outside the supported workspace: {}",
+                path.display()
+            ),
+            error,
+        );
     })?;
     let relative = relative
         .to_str()
@@ -237,9 +240,9 @@ pub(crate) fn safe_relative(name: &str) -> Result<PathBuf> {
 }
 
 pub(crate) fn assert_no_symlink(root: &Path, path: &Path) -> Result<()> {
-    let relative = path
-        .strip_prefix(root)
-        .map_err(|_| return failure(format!("path escaped workspace: {}", path.display())))?;
+    let relative = path.strip_prefix(root).map_err(|error| {
+        return failure_with_source(format!("path escaped workspace: {}", path.display()), error);
+    })?;
 
     let mut current = root.to_path_buf();
     for component in relative.components() {
@@ -762,6 +765,38 @@ pub(crate) fn validate_manifest_paths(root: &Path, exclusions: &[PathBuf]) -> Re
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+    use std::path::StripPrefixError;
+
+    #[test]
+    fn outside_workspace_errors_retain_prefix_sources() {
+        let temporary = tempfile::tempdir().expect("create workspace fixture");
+        let root = temporary.path().join("workspace");
+        let outside = temporary.path().join("outside.rs");
+        fs::create_dir_all(&root).expect("create workspace directory");
+        fs::write(&outside, "fn main() {}\n").expect("write outside source");
+        let root = canonical(&root).expect("canonical workspace root");
+        let outside = canonical(&outside).expect("canonical outside path");
+
+        for (error, message) in [
+            (
+                relative_path(&root, &outside).expect_err("outside source must be rejected"),
+                format!(
+                    "source path is outside the supported workspace: {}",
+                    outside.display()
+                ),
+            ),
+            (
+                assert_no_symlink(&root, &outside).expect_err("escaped path must be rejected"),
+                format!("path escaped workspace: {}", outside.display()),
+            ),
+        ] {
+            assert_eq!(error.to_string(), message);
+            assert!(matches!(
+                error.source(),
+                Some(source) if source.is::<StripPrefixError>()
+            ));
+        }
+    }
 
     #[expect(
         clippy::panic_in_result_fn,

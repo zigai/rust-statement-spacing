@@ -2,7 +2,7 @@
 use crate::protocol::{LintResult, MAX_JSON_BYTES, collect_edits};
 use crate::workflow::Driver;
 use crate::workspace::{canonical, digest, relative_path};
-use crate::{Result, VERSION, failure};
+use crate::{Result, VERSION, failure, failure_with_source};
 #[cfg(unix)]
 use rustix::io::Errno;
 #[cfg(unix)]
@@ -90,9 +90,8 @@ fn interrupted() -> bool {
 pub(crate) fn check_interrupted() -> Result<()> {
     if interrupted() {
         return Err(Interrupted.into());
-    } else {
-        return Ok(());
     }
+    return Ok(());
 }
 
 async fn cancellation() {
@@ -580,8 +579,9 @@ impl Driver {
             manifest.to_string_lossy().into_owned(),
         ]);
         let result = self.run(args, parent, None, true)?;
-        let value: Value = serde_json::from_str(&result.stdout)
-            .map_err(|_| return failure("invalid cargo locate-project output"))?;
+        let value: Value = serde_json::from_str(&result.stdout).map_err(|error| {
+            return failure_with_source("invalid cargo locate-project output", error);
+        })?;
         let root_manifest = value
             .get("root")
             .and_then(Value::as_str)
