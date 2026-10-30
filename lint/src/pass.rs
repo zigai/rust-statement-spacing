@@ -154,8 +154,7 @@ impl Spacing {
         for (_, file) in std::mem::take(&mut self.files) {
             let result = (|| -> Result<(), String> {
                 let text = spans::read_source(&file.path, &file.source)?;
-                let mut parsed = parse_source(&text.normalized, &edition)?;
-                parsed.attach(&text.normalized, &file.semantics);
+                let parsed = parse_source(&text.normalized, &edition, Some(&file.semantics))?;
                 let plan = plan(&self.config, &text.normalized, &parsed.model)?;
                 skipped_boundaries += plan.skipped_boundaries;
                 let candidate =

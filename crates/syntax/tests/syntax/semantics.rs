@@ -8,7 +8,7 @@ use std::error::Error;
 )]
 fn no_compiler_mapping_means_no_edits() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    one();\n    two();\n}\n";
-    let parsed = parse_source(source, "2024")?;
+    let parsed = parse_source(source, "2024", None)?;
     assert!(plan(&strict(), source, &parsed.model)?.findings.is_empty());
 
     return Ok(());
@@ -272,7 +272,7 @@ fn mutable_receiver_is_not_an_assignment_write() {
 )]
 fn inactive_sibling_is_a_barrier_not_a_deleted_unit() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    one();\n    #[cfg(any())]\n    two();\n    three();\n}\n";
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let mut semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
     let disabled_start = source
         .find("two();")
@@ -294,7 +294,7 @@ fn inactive_sibling_is_a_barrier_not_a_deleted_unit() -> Result<(), Box<dyn Erro
 )]
 fn block_valued_condition_is_part_of_the_header() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    if { ready } {\n        action();\n    }\n}\n";
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let mut semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
     let start = source
         .find("ready")
@@ -326,7 +326,7 @@ fn block_valued_condition_is_part_of_the_header() -> Result<(), Box<dyn Error>> 
 )]
 fn first_match_arm_operation_does_not_include_nested_body_reads() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    match tag {\n        _ => {\n            if ready {\n                use_value(value);\n            }\n        }\n    }\n}\n";
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let mut semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
     let start = source
         .find("value);")

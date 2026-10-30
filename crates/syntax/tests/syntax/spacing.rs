@@ -58,7 +58,7 @@ fn multiline_phases_preserve_short_bindings_and_comment_attachments() -> Result<
     let mut config = Config::default();
     config.grouping.bindings = Bindings::Multiline;
     config.grouping.expressions = Expressions::Multiline;
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
     for list in &mut parsed.model.lists {
@@ -78,7 +78,7 @@ fn multiline_phases_preserve_short_bindings_and_comment_attachments() -> Result<
     }
     let result = plan(&config, source, &parsed.model)?;
     assert_eq!(apply_edits(source, &result.edits())?, expected);
-    let mut reparsed = parse_source(expected, "2024")?;
+    let mut reparsed = parse_source(expected, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(reparsed.code_ranges());
     reparsed.attach(expected, &anchors);
     for list in &mut reparsed.model.lists {
@@ -119,7 +119,7 @@ fn multiline_short_consumers_require_resolved_dependency() -> Result<(), Box<dyn
     config.grouping.bindings = Bindings::Multiline;
 
     for consumer in ["value", "outer:value"] {
-        let mut parsed = parse_source(source, "2024")?;
+        let mut parsed = parse_source(source, "2024", None)?;
         let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
         parsed.attach(source, &anchors);
 
@@ -163,7 +163,7 @@ fn multiline_control_spacing_respects_checks_and_rule_suppression() -> Result<()
             config.disable.push(Rule::ControlFlow);
         }
 
-        let mut parsed = parse_source(source, "2024")?;
+        let mut parsed = parse_source(source, "2024", None)?;
         let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
         parsed.attach(source, &anchors);
 
@@ -310,7 +310,7 @@ fn contextual_validation_stages_and_call_checks_respect_shared_inputs() -> Resul
                 .replace("    finish(input);", "\n    finish(input);"),
         ),
     ] {
-        let mut parsed = parse_source(source, "2024")?;
+        let mut parsed = parse_source(source, "2024", None)?;
         let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
         parsed.attach(source, &anchors);
 
@@ -339,7 +339,7 @@ fn contextual_validation_stages_and_call_checks_respect_shared_inputs() -> Resul
 )]
 fn literal_loop_setup_stays_whole_when_exceeding_allowance() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    let mut total = 0;\n    let mut count = 0;\n    for value in values {\n        total += value;\n        count += 1;\n    }\n    (total, count)\n}\n";
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
 
@@ -441,7 +441,7 @@ fn final_macro_after_small_loop_is_compact_and_opaque() -> Result<(), Box<dyn Er
 fn multiline_destructuring_consumer_uses_positive_facts_when_effects_are_unknown()
 -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    let (left, right) = split(\n        || deferred(),\n    );\n    let result = combine(left, right);\n}\n";
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
 
@@ -485,7 +485,7 @@ fn normalized_pair(
     second: &str,
     facts: &[Facts; 2],
 ) -> Result<String, String> {
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
 
@@ -1085,7 +1085,7 @@ fn action_assertion_and_shared_input_verification_form_one_step() -> Result<(), 
         &source,
         &source.replace(verification, &format!("\n    {verification}")),
     ] {
-        let mut parsed = parse_source(input, "2024")?;
+        let mut parsed = parse_source(input, "2024", None)?;
         let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
         parsed.attach(input, &anchors);
 
@@ -1384,7 +1384,7 @@ fn audit_accumulator_suffix_is_bounded_and_separate_from_geometry() -> Result<()
                 .replace("\n\n", "\n")
                 .replace(&format!("    {control}"), &format!("\n    {control}")),
         ] {
-            let mut parsed = parse_source(input, "2024")?;
+            let mut parsed = parse_source(input, "2024", None)?;
             let mut semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
             for name in &names {
                 let declaration = format!("let mut {name}");
@@ -1483,7 +1483,7 @@ fn audit_large_accumulator_setup_retains_overflow_boundary() -> Result<(), Box<d
 
         source.push_str("    }\n}\n");
 
-        let mut parsed = parse_source(&source, "2024")?;
+        let mut parsed = parse_source(&source, "2024", None)?;
         let mut semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
         for index in 0..count {
             let name = format!("count_{index}");
@@ -1544,7 +1544,7 @@ fn audit_following_control_does_not_split_preparation() -> Result<(), Box<dyn Er
             &expected,
             &expected.replace(&format!("    {second}"), &format!("\n    {second}")),
         ] {
-            let mut parsed = parse_source(input, "2024")?;
+            let mut parsed = parse_source(input, "2024", None)?;
             let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
             parsed.attach(input, &anchors);
 
@@ -1656,7 +1656,7 @@ fn mutation_assertions_require_the_changed_value() -> Result<(), Box<dyn Error>>
 )]
 fn loop_body_statement_counts() -> Result<(), Box<dyn Error>> {
     let source = "fn f(items: &[u32]) {\n    for item in items {\n        push(item);\n    }\n    while done() {\n        step();\n        step();\n    }\n    loop {\n    }\n    if ready() {\n    }\n}\n";
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
     let mut counts = Vec::new();
@@ -1689,7 +1689,7 @@ fn pinned_values_mark_content_assertions() -> Result<(), Box<dyn Error>> {
     assert_eq!(actual, -42);
 }
 "##;
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
     let mut flags = Vec::new();
@@ -1749,7 +1749,7 @@ fn documented_items_separate_from_use_groups() -> Result<(), Box<dyn Error>> {
 )]
 fn size_sanity_checks_do_not_pin() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    assert_eq!(page.len(), 3);\n    assert_eq!(summary.item_count, 1);\n    assert_eq!(count, 111);\n    assert_eq!(failure.code, \"x\");\n}\n";
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
     let mut flags = Vec::new();
@@ -1782,7 +1782,7 @@ type VisualCase = (
 );
 
 fn compiled_visual(source: &str, uses: &[(Use, &str)]) -> Result<String, Box<dyn Error>> {
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let mut index = SemanticIndex::structural_anchors(parsed.code_ranges());
     for (role, marked) in uses {
         let needle = marked.replace('`', "");

@@ -24,7 +24,7 @@ fn nested_functions_are_not_outer_statement_groups() -> Result<(), Box<dyn Error
 )]
 fn if_else_and_let_else_are_single_source_units() -> Result<(), Box<dyn Error>> {
     let source = "fn f(x: Option<u8>) {\n    let Some(x) = x else {\n        return;\n    };\n    if x == 0 {\n        one();\n    } else {\n        two();\n    }\n}\n";
-    let parsed = parse_source(source, "2024")?;
+    let parsed = parse_source(source, "2024", None)?;
     let let_start = source.find("let Some").ok_or("expected let-else fixture")?;
     let outer = parsed
         .model
@@ -293,7 +293,7 @@ fn guards_accept_short_trailing_exits_and_try_operations() -> Result<(), Box<dyn
         ("", false),
     ] {
         let source = format!("fn f() {{ if condition {{ {body} }} }}");
-        let parsed = parse_source(&source, "2024")?;
+        let parsed = parse_source(&source, "2024", None)?;
         let unit = parsed
             .model
             .lists
@@ -305,7 +305,7 @@ fn guards_accept_short_trailing_exits_and_try_operations() -> Result<(), Box<dyn
     }
 
     let source = "fn f() { if condition { check()?; } else { return; } }";
-    let parsed = parse_source(source, "2024")?;
+    let parsed = parse_source(source, "2024", None)?;
     assert!(
         !parsed
             .model
@@ -358,7 +358,7 @@ fn unsafe_operations_and_guard_checks_can_precede_bindings() -> Result<(), Box<d
 )]
 fn macro_following_block_with_shared_input_remains_compact() -> Result<(), Box<dyn Error>> {
     let source = "fn f(values: &[u32]) {\n    for value in values {\n        consume(value);\n    }\n    process!(values);\n}\n";
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let mut semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
     let loop_values = source
         .find("in values")
@@ -385,7 +385,7 @@ fn macro_following_block_with_shared_input_remains_compact() -> Result<(), Box<d
     assert!(plan_shared.findings.is_empty());
 
     let unrelated = "fn f(values: &[u32], other: &[u32]) {\n    for value in values {\n        consume(value);\n    }\n    process!(other);\n}\n";
-    let mut parsed_unrelated = parse_source(unrelated, "2024")?;
+    let mut parsed_unrelated = parse_source(unrelated, "2024", None)?;
     let mut semantics_unrelated = SemanticIndex::structural_anchors(parsed_unrelated.code_ranges());
     let loop_val = unrelated
         .find("in values")

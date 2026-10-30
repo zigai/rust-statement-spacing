@@ -12,12 +12,18 @@ pub struct ParsedSource {
 
 /// Parses normalized Rust source for the requested edition.
 ///
+/// Without `semantics`, units remain inactive until [`ParsedSource::attach`].
+///
 /// # Errors
 /// Rejects unsupported edition strings and source containing parser errors.
 /// Recovery trees are never used as a basis for editing.
-pub fn parse_source(source: &str, edition: &str) -> Result<ParsedSource, String> {
+pub fn parse_source(
+    source: &str,
+    edition: &str,
+    semantics: Option<&SemanticIndex>,
+) -> Result<ParsedSource, String> {
     let root = parse_root(source, edition)?;
-    let model = lower(&root, source, None);
+    let model = lower(&root, source, semantics);
 
     return Ok(ParsedSource { root, model });
 }

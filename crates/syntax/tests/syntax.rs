@@ -7,7 +7,7 @@ use rust_statement_spacing_syntax::{
 };
 
 fn structural(source: &str, config: &Config) -> Result<(String, Plan), String> {
-    let mut parsed = parse_source(source, "2024")?;
+    let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
 

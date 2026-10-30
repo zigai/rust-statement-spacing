@@ -16,14 +16,14 @@ fn raw_string_contents_are_unchanged() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn invalid_source_is_rejected_instead_of_recovery_editing() {
-    let parse_error = parse_source("fn f( {", "2024").err();
+    let parse_error = parse_source("fn f( {", "2024", None).err();
     assert!(parse_error.is_some());
     assert_eq!(token_fingerprint("fn f( {", "2024").err(), parse_error);
 }
 
 #[test]
 fn unsupported_edition_is_rejected() {
-    assert!(parse_source("fn f() {}", "2050").is_err());
+    assert!(parse_source("fn f() {}", "2050", None).is_err());
     assert!(token_fingerprint("fn f() {}", "2050").is_err());
 }
 

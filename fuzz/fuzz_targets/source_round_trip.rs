@@ -8,7 +8,7 @@ fuzz_target!(|input: &str| {
     if input.len() > 32_768 {
         return;
     }
-    let Ok(mut parsed) = parse_source(input, "2024") else {
+    let Ok(mut parsed) = parse_source(input, "2024", None) else {
         return;
     };
     let semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
@@ -19,7 +19,7 @@ fuzz_target!(|input: &str| {
         token_fingerprint(input, "2024").unwrap(),
         token_fingerprint(&fixed, "2024").unwrap()
     );
-    let mut parsed = parse_source(&fixed, "2024").expect("fixes preserve syntax");
+    let mut parsed = parse_source(&fixed, "2024", None).expect("fixes preserve syntax");
     let semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(&fixed, &semantics);
     let second = plan(&Config::default(), &fixed, &parsed.model).expect("idempotent model");
