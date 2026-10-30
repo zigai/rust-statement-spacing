@@ -101,7 +101,7 @@ def main():
             )
             if not options.portable_only:
                 run(
-                    ["cargo", "+nightly-2026-05-28", "build", "--release", "--locked"],
+                    ["cargo", "+nightly-2026-08-20", "build", "--release", "--locked"],
                     ROOT / "lint",
                 )
                 run([sys.executable, "scripts/validate_registration.py"])

@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: rustup toolchain install 1.99.0 --profile minimal --component clippy --component rustfmt
+      - run: rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -59,7 +59,7 @@ jobs:
             ~/.cargo/bin/cargo-dylint
             ~/.cargo/bin/dylint-link
             ~/.dylint_drivers
-          key: dylint-${{ runner.os }}-6.0.4-nightly-2026-05-28
+          key: dylint-${{ runner.os }}-6.3.1-nightly-2026-08-20
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -82,7 +82,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: rustup toolchain install 1.99.0 --profile minimal
+      - run: rustup toolchain install 1.99.1 --profile minimal
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p cargo-statement-spacing --locked
       - run: cargo test --workspace --locked

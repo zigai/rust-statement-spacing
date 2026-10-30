@@ -20,6 +20,7 @@ mod workspace;
 use rust_statement_spacing_core::Rule;
 use rustc_data_structures::marker::IntoDynSyncSend;
 use rustc_lint::LintStore;
+use rustc_middle::ty::TyCtxt;
 use rustc_session::lint::{Lint, LintId};
 use rustc_session::{Session, declare_lint};
 
@@ -78,7 +79,7 @@ pub fn register_lints(sess: &Session, store: &mut LintStore) {
     };
     // Bridge standard Send/Sync for globset's trait objects to rustc's dynamic markers.
     let workspace = IntoDynSyncSend(workspace);
-    store.register_late_pass(move |_| {
+    store.register_late_lint_pass(Box::new(move |_: TyCtxt<'_>| {
         Box::new(pass::Spacing::new(config.clone(), workspace.clone().0))
-    });
+    }));
 }

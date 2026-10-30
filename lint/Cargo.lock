@@ -179,14 +179,15 @@ checksum = "9bda8e21c04aca2ae33ffc2fd8c23134f3cac46db123ba97bd9d3f3b8a4a85e1"
 
 [[package]]
 name = "dylint_internal"
-version = "6.0.4"
+version = "6.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc1edfdeb8f1b20ee0adcd6fa30f1562aebe7ef49caf89a0befab488d62babfd"
+checksum = "7a920e454e4ba2845229c310246d7970cee9db94f6af100fe19120a8c221ef4c"
 dependencies = [
  "anyhow",
  "cargo_metadata",
  "git2",
  "log",
+ "pastey",
  "regex",
  "semver",
  "serde",
@@ -198,9 +199,9 @@ dependencies = [
 
 [[package]]
 name = "dylint_linting"
-version = "6.0.4"
+version = "6.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e9f65c0439f032da8c5febad832b033c6784f084a3fdc8c3b41e0ed727d5654"
+checksum = "cb4a8f5c2320a9d69c56f2ef398467d07a0320f0e6957293f82f41199638324b"
 dependencies = [
  "cargo_metadata",
  "dylint_internal",
@@ -421,6 +422,12 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "pin-project-lite"
