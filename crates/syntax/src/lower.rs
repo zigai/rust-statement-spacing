@@ -1,5 +1,5 @@
 use crate::comments::classify_gap;
-use crate::protection::{inside_token_tree, protected};
+use crate::protection::{Protection, inside_token_tree};
 use crate::semantics::SemanticIndex;
 use crate::shape;
 use crate::units::{
@@ -16,6 +16,7 @@ fn make_unit(
     node: &SyntaxNode,
     semantics: Option<&SemanticIndex>,
     test_statements: Option<usize>,
+    protection: &mut Protection,
 ) -> Unit {
     let code = code_range(node);
     let expression = expression_node(node);
@@ -116,7 +117,7 @@ fn make_unit(
                 .children()
                 .any(|node| return is_expression(&node)),
         active: anchor.is_some(),
-        protected: protected(node),
+        protected: protection.protected(node),
         facts,
         enabled: anchor.map_or(RuleMask::none(), |a| return a.enabled),
         anchor: anchor.map_or(0, |a| return a.id),
@@ -150,6 +151,7 @@ pub(crate) fn lower(
     semantics: Option<&SemanticIndex>,
 ) -> SourceModel {
     let mut model = SourceModel::default();
+    let mut protection = Protection::default();
     for container in root.descendants() {
         let k = container.kind();
         let item_list = matches!(
@@ -173,7 +175,7 @@ pub(crate) fn lower(
                 return is_unit(node);
             })
             .map(|node| {
-                let unit = make_unit(&node, semantics, test_statements);
+                let unit = make_unit(&node, semantics, test_statements, &mut protection);
                 if unit.active && !unit.protected && unit.enabled.has(Rule::Layout) {
                     for attribute in node
                         .children()
@@ -242,7 +244,7 @@ pub(crate) fn lower(
             .filter(|unit| return !unit.kind.is_item())
             .count();
 
-        if k == SyntaxKind::STMT_LIST && !protected(&container) {
+        if k == SyntaxKind::STMT_LIST && !protection.protected(&container) {
             let left = container
                 .children_with_tokens()
                 .filter_map(|n| return n.into_token())
