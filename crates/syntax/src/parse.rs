@@ -64,6 +64,11 @@ impl ParsedSource {
     pub fn attach(&mut self, source: &str, semantics: &SemanticIndex) {
         self.model = lower(&self.root, source, Some(semantics));
     }
+
+    /// Fingerprint of the parsed source, as returned by [`token_fingerprint`].
+    pub fn token_fingerprint(&self) -> Vec<(String, String)> {
+        return fingerprint(&self.root);
+    }
 }
 
 /// Returns token kinds and exact text, excluding only whitespace tokens.
@@ -72,12 +77,14 @@ impl ParsedSource {
 /// # Errors
 /// Rejects unsupported editions and syntax errors as in [`parse_source`].
 pub fn token_fingerprint(source: &str, edition: &str) -> Result<Vec<(String, String)>, String> {
-    let root = parse_root(source, edition)?;
+    return Ok(fingerprint(&parse_root(source, edition)?));
+}
 
-    return Ok(root
+fn fingerprint(root: &SyntaxNode) -> Vec<(String, String)> {
+    return root
         .descendants_with_tokens()
         .filter_map(|element| return element.into_token())
         .filter(|token| return token.kind() != SyntaxKind::WHITESPACE)
         .map(|token| return (format!("{:?}", token.kind()), token.text().to_string()))
-        .collect());
+        .collect();
 }

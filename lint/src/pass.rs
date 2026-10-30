@@ -159,7 +159,7 @@ impl Spacing {
                 skipped_boundaries += plan.skipped_boundaries;
                 let candidate =
                     rust_statement_spacing_core::apply_edits(&text.normalized, &plan.edits())?;
-                let tokens = token_fingerprint(&text.normalized, &edition)?;
+                let tokens = parsed.token_fingerprint();
                 if tokens != token_fingerprint(&candidate, &edition)? {
                     return Err(
                         "internal error: a proposed fix changed a code/comment/literal token"
