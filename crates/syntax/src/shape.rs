@@ -1,8 +1,8 @@
 use crate::units::{
-    control_body_start, deferred_ranges, expression_node, is_expression, is_item, is_unit, range,
+    control_body_start, expression_node, is_deferred, is_expression, is_item, is_unit, range,
 };
 use ra_ap_syntax::{
-    AstNode, Edition, SyntaxKind, SyntaxNode,
+    AstNode, Edition, NodeOrToken, SyntaxKind, SyntaxNode, WalkEvent,
     ast::{self, HasArgList as _},
 };
 use rust_statement_spacing_core::{ByteRange, Form, Scope, Shape, StatementRole};
@@ -270,7 +270,7 @@ pub(crate) fn shape(node: &SyntaxNode) -> Shape {
             |expr| return expr.syntax().clone(),
         );
 
-    let deferred = deferred_ranges(&initializer);
+    let (fallible, string_inputs) = immediate_inputs(&initializer);
     let root = unwrapped(initializer.clone());
     let form = if node
         .children()
@@ -378,27 +378,36 @@ pub(crate) fn shape(node: &SyntaxNode) -> Shape {
                     .descendants_with_tokens()
                     .any(|token| return token.kind() == SyntaxKind::MUT_KW);
             }),
-        fallible: initializer.descendants().any(|child| {
-            return child.kind() == SyntaxKind::TRY_EXPR
-                && !deferred
-                    .iter()
-                    .any(|body| return body.contains(range(&child)));
-        }),
-        error_handler: handler(initializer.clone()),
+        fallible,
+        error_handler: handler(initializer),
         exiting_guard,
-        string_inputs: initializer
-            .descendants_with_tokens()
-            .filter_map(|element| return element.into_token())
-            .filter(|token| return token.kind() == SyntaxKind::STRING)
-            .map(|token| {
-                return ByteRange::new(
+        string_inputs,
+    };
+}
+
+fn immediate_inputs(initializer: &SyntaxNode) -> (bool, Vec<ByteRange>) {
+    let mut fallible = false;
+    let mut string_inputs = Vec::new();
+    let mut walk = initializer.preorder_with_tokens();
+    while let Some(event) = walk.next() {
+        match event {
+            WalkEvent::Enter(NodeOrToken::Node(node)) => {
+                if node != *initializer && is_deferred(&node) {
+                    walk.skip_subtree();
+                } else if node.kind() == SyntaxKind::TRY_EXPR {
+                    fallible = true;
+                }
+            }
+            WalkEvent::Enter(NodeOrToken::Token(token)) if token.kind() == SyntaxKind::STRING => {
+                string_inputs.push(ByteRange::new(
                     u32::from(token.text_range().start()) as usize,
                     u32::from(token.text_range().end()) as usize,
-                );
-            })
-            .filter(|range| return !deferred.iter().any(|body| return body.contains(*range)))
-            .collect(),
-    };
+                ));
+            }
+            WalkEvent::Enter(NodeOrToken::Token(_)) | WalkEvent::Leave(_) => {}
+        }
+    }
+    return (fallible, string_inputs);
 }
 
 pub(crate) fn scope(container: &SyntaxNode) -> Scope {

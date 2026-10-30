@@ -144,23 +144,21 @@ pub(crate) fn unit_kind(node: &SyntaxNode) -> UnitKind {
 pub(crate) fn deferred_ranges(node: &SyntaxNode) -> Vec<ByteRange> {
     return node
         .descendants()
-        .filter(|child| {
-            if child == node {
-                return false;
-            }
-
-            let k = child.kind();
-
-            return k == SyntaxKind::CLOSURE_EXPR
-                || k == SyntaxKind::FN
-                || (k == SyntaxKind::BLOCK_EXPR
-                    && child
-                        .children_with_tokens()
-                        .filter_map(|n| return n.into_token())
-                        .any(|token| return token.text() == "async"));
-        })
+        .filter(|child| return child != node && is_deferred(child))
         .map(|child| return range(&child))
         .collect();
+}
+
+pub(crate) fn is_deferred(node: &SyntaxNode) -> bool {
+    let k = node.kind();
+
+    return k == SyntaxKind::CLOSURE_EXPR
+        || k == SyntaxKind::FN
+        || (k == SyntaxKind::BLOCK_EXPR
+            && node
+                .children_with_tokens()
+                .filter_map(|n| return n.into_token())
+                .any(|token| return token.text() == "async"));
 }
 
 /// Select written bodies without confusing a block-valued condition/scrutinee
