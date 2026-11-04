@@ -66,8 +66,8 @@ def main():
             raise RuntimeError(
                 "Resolve dependency locks with scripts/bootstrap.sh first"
             )
-        run(["cargo", "+1.96.0", "build", "-p", "cargo-statement-spacing", "--locked"])
-        run(["cargo", "+1.96.0", "run", "-p", "source-policy", "--locked"])
+        run(["cargo", "+1.99.1", "build", "-p", "cargo-statement-spacing", "--locked"])
+        run(["cargo", "+1.99.1", "run", "-p", "source-policy", "--locked"])
         run(
             [
                 sys.executable,
@@ -79,13 +79,13 @@ def main():
                 "-v",
             ]
         )
-        run(["cargo", "+1.96.0", "test", "--workspace", "--locked"])
+        run(["cargo", "+1.99.1", "test", "--workspace", "--locked"])
         with tempfile.TemporaryDirectory(prefix="statement-spacing-installed-") as name:
             install_root = Path(name)
             run(
                 [
                     "cargo",
-                    "+1.96.0",
+                    "+1.99.1",
                     "install",
                     "--path",
                     ROOT / "crates/cli",
@@ -131,10 +131,10 @@ def main():
                         "--library-path",
                         ROOT / "lint",
                         "--format-toolchain",
-                        "1.96.0",
+                        "1.99.1",
                         "--json",
                     ]
-                    run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
+                    run(["cargo", "+1.99.1", "fmt", "--all", "--", "--check"], fixture)
                     first = run(base + ["check", *arguments], fixture, expected=(1,))
                     first_report = json.loads(first.stdout)
                     assert len(first_report["findings"]) == 1, (
@@ -164,13 +164,13 @@ def main():
                     )
                     assert (dependency / "zig-out/artifact").read_bytes() == b"ignored build output"
                     assert (dependency / "source.txt").read_text() == "dependency source\n"
-                    run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
+                    run(["cargo", "+1.99.1", "fmt", "--all", "--", "--check"], fixture)
                     again = run(base + ["fix", *arguments], fixture)
                     assert not json.loads(again.stdout)["changed_files"], (
                         "fix not idempotent"
                     )
                     run(base + ["check", *arguments], fixture)
-                    run(["cargo", "+1.96.0", "check", "--locked"], fixture)
+                    run(["cargo", "+1.99.1", "check", "--locked"], fixture)
 
                     grouped = (ROOT / "tests/fixtures/grouping.rs").read_bytes()
                     source.write_bytes(grouped)
@@ -244,7 +244,7 @@ def main():
                         run(base + ["fix", *arguments], fixture)
                         assert source.read_bytes() == audit, "audit grouping regression"
                         run(base + ["check", *arguments], fixture)
-                        run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
+                        run(["cargo", "+1.99.1", "fmt", "--all", "--", "--check"], fixture)
                     source.write_bytes(grouped)
                     (fixture / "dylint.toml").write_text("[statement_spacing]\n")
 
@@ -255,7 +255,7 @@ def main():
                             + before.decode(),
                             encoding="utf-8",
                         )
-                        run(["cargo", "+1.96.0", "fmt", "--all"], fixture)  # baseline only
+                        run(["cargo", "+1.99.1", "fmt", "--all"], fixture)  # baseline only
                         run(base + ["check", *arguments], fixture)
 
                     (fixture / "dylint.toml").write_text(
@@ -302,7 +302,7 @@ def main():
                     assert source.read_bytes() == expected, (
                         "native Dylint fix differs from golden output"
                     )
-                    run(["cargo", "+1.96.0", "fmt", "--all", "--", "--check"], fixture)
+                    run(["cargo", "+1.99.1", "fmt", "--all", "--", "--check"], fixture)
                     report["golden_sha256"] = hashlib.sha256(expected).hexdigest()
         report["status"] = "passed"
         return 0
