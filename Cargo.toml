@@ -178,3 +178,7 @@ wildcard_imports = "deny"
 write_with_newline = "deny"
 writeln_empty_string = "deny"
 zero_sized_map_values = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
