@@ -1,3 +1,3 @@
-- just --justfile Justfile --list parses and lists the recipes; just --justfile Justfile --dry-run clean shows only the approved quoted removal paths and retained commands.
+- just --justfile Justfile --list parses and lists the recipes; --dry-run clean renders planned commands and the helper body, not bound positional path arguments; --show clean verifies the quoted remove dependency or root invocation and expected paths.
 - git ls-files is empty for every removal path and recursive pattern, including directory descendants; the remove helper matches /home/zigai/.cache/just-clean-check/remove.just byte-for-byte at EOF.
 - git diff --check reports no whitespace errors. Full checks, stamp, tests, builds, lint, and real clean are skipped at the user request; no push is performed.
