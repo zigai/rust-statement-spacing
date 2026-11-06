@@ -1,0 +1,3 @@
+- all Justfiles pass just --dry-run clean and --list; git ls-files empty for retained paths/globs/find patterns.
+- Full project checks are skipped as requested; no real clean, tests, lint, or builds run in the main checkout.
+- Listed paths and find patterns contain no tracked files; .cache, local configuration, and user data are preserved.
