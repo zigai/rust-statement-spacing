@@ -1,1 +1,3 @@
 Verified working-tree Justfiles with just --list, just --dry-run build, and just --fmt --check; exact logs at /home/zigai/.cache/build-standard/verification.json. Own changes staged using git apply --cached --3way in a private index; unrelated staged/working hunks preserved; original hooks retained. No pushes, publishing, or actual deployments.
+
+Final task audit: working-tree concrete Justfiles pass just --list, just --dry-run build and just --fmt --check (verification.json). Template build/install logs are in template-results.json. Checks cover the final working snapshots, not every intermediate commit in isolation. No publication, push, or actual deployment. Full report: /home/zigai/.cache/build-standard/report.md.
