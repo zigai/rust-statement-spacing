@@ -23,6 +23,7 @@ use rustc_lint::LintStore;
 use rustc_middle::ty::TyCtxt;
 use rustc_session::lint::{Lint, LintId};
 use rustc_session::{Session, declare_lint};
+use rustc_span::Symbol;
 
 declare_lint!(pub STATEMENT_SPACING_BINDINGS, Warn, "separate unrelated binding groups");
 declare_lint!(pub STATEMENT_SPACING_EXPRESSIONS, Warn, "separate unrelated operations");
@@ -48,6 +49,15 @@ pub(crate) fn lint(rule: Rule) -> &'static Lint {
 
 #[unsafe(no_mangle)]
 pub fn register_lints(sess: &Session, store: &mut LintStore) {
+    // Cargo reruns a crate whose tracked environment changed. Each verification
+    // run has a fresh run id, so workspace crates are linted again even when a
+    // persistent target directory holds their previous check results.
+    let run_id = std::env::var(protocol::RUN_ID)
+        .ok()
+        .map(|value| Symbol::intern(&value));
+    sess.env_depinfo
+        .lock()
+        .insert((Symbol::intern(protocol::RUN_ID), run_id));
     let lints: Vec<_> = Rule::ALL.into_iter().map(lint).collect();
     store.register_lints(&lints);
     store.register_group(

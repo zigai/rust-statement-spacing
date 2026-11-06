@@ -15,6 +15,8 @@ struct Probe<'a> {
     token_hashes: &'a BTreeMap<String, String>,
 }
 
+pub(crate) const RUN_ID: &str = "STATEMENT_SPACING_RUN_ID";
+
 pub(crate) fn emit(
     files: &[String],
     token_hashes: &BTreeMap<String, String>,
@@ -23,7 +25,7 @@ pub(crate) fn emit(
     let Some(directory) = std::env::var_os("STATEMENT_SPACING_PROBE_DIR") else {
         return Ok(());
     };
-    let Some(run_id) = std::env::var_os("STATEMENT_SPACING_RUN_ID") else {
+    let Some(run_id) = std::env::var_os(RUN_ID) else {
         return Ok(());
     };
     let path = PathBuf::from(directory).join(format!("{}.json", std::process::id()));

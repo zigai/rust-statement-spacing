@@ -644,16 +644,34 @@ impl Driver {
         return Ok(());
     }
 
+    pub(crate) fn lint_target(&mut self, root: &Path) -> Result<PathBuf> {
+        let mut args = self.formatter_cargo();
+        args.extend([
+            "metadata".into(),
+            "--no-deps".into(),
+            "--format-version=1".into(),
+            "--manifest-path".into(),
+            root.join("Cargo.toml").to_string_lossy().into_owned(),
+        ]);
+        let metadata: Value = serde_json::from_str(&self.run(args, root, None, true)?.stdout)?;
+        let directory = metadata
+            .get("target_directory")
+            .and_then(Value::as_str)
+            .ok_or_else(|| return failure("cargo metadata did not report a target directory"))?;
+
+        return Ok(Path::new(directory).join("statement-spacing"));
+    }
+
     pub(crate) fn lint(
         &mut self,
         root: &Path,
         temporary: &Path,
+        target: &Path,
         label: &str,
         original_root: &Path,
     ) -> Result<LintResult> {
         let probes = temporary.join(format!("{label}-probes"));
         fs::create_dir_all(&probes)?;
-        let target = temporary.join(format!("{label}-target"));
         let mut random = [0_u8; 24];
         random_bytes(&mut random)?;
 

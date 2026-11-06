@@ -85,9 +85,16 @@ impl Driver {
             .prefix("statement-spacing-")
             .tempdir()?;
 
-        let replica = temporary.path().join("workspace");
-        workspace::copy_snapshot(&root, &replica, &original, &exclusions, &gitignores)?;
-        let replica = workspace::canonical(&replica)?;
+        // Checking reads the project in place. Fixing edits and re-verifies a
+        // copy so that the project changes only through the final transaction.
+        let replica = if self.options.command == "check" {
+            root.clone()
+        } else {
+            let replica = temporary.path().join("workspace");
+            workspace::copy_snapshot(&root, &replica, &original, &exclusions, &gitignores)?;
+            workspace::canonical(&replica)?
+        };
+        let target = self.lint_target(&root)?;
         let mut args = self.formatter_cargo();
         args.extend([
             "metadata".into(),
@@ -105,7 +112,8 @@ impl Driver {
             // them. Otherwise removing blank lines destroys the group's order
             // before the whitespace-only lint can reconstruct its boundaries.
             let before_layout = workspace::scan(&replica, limit, &exclusions, &gitignores)?;
-            let mut layout = self.lint(&replica, temporary.path(), "declarations", &root)?;
+            let mut layout =
+                self.lint(&replica, temporary.path(), &target, "declarations", &root)?;
             workspace::assert_snapshot(&replica, &before_layout, limit, &exclusions, &gitignores)?;
             layout
                 .edits
@@ -117,7 +125,7 @@ impl Driver {
         }
 
         let before_lint = workspace::scan(&replica, limit, &exclusions, &gitignores)?;
-        let mut first = self.lint(&replica, temporary.path(), "initial", &root)?;
+        let mut first = self.lint(&replica, temporary.path(), &target, "initial", &root)?;
         workspace::assert_snapshot(&replica, &before_lint, limit, &exclusions, &gitignores)?;
 
         let mut features: Vec<_> = self
@@ -201,7 +209,7 @@ impl Driver {
         protocol::apply(&replica, &first.edits)?;
         let candidate = workspace::scan(&replica, limit, &exclusions, &gitignores)?;
         self.fmt(&replica, false)?;
-        let second = self.lint(&replica, temporary.path(), "fixed", &root)?;
+        let second = self.lint(&replica, temporary.path(), &target, "fixed", &root)?;
         workspace::assert_snapshot(&replica, &candidate, limit, &exclusions, &gitignores)?;
 
         if !second.findings.is_empty() || !second.edits.is_empty() {

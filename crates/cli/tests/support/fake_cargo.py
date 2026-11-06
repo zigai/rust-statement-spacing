@@ -59,6 +59,7 @@ elif args[0] == "metadata":
     emit(
         {
             "workspace_root": str(root),
+            "target_directory": str(root / "target"),
             "workspace_members": [p["id"] for p in packages],
             "packages": packages,
         }
