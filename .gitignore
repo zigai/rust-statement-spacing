@@ -28,3 +28,4 @@ Thumbs.db
 .statement-spacing/
 /validation-output/
 # Cargo.lock files SHOULD be committed after bootstrap resolves them.
+/target/llvm-cov-target/

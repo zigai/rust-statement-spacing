@@ -17,12 +17,3 @@ updates:
       github-actions:
         patterns: ["*"]
     open-pull-requests-limit: 10
-
-  - package-ecosystem: pre-commit
-    directory: "/"
-    schedule:
-      interval: weekly
-    groups:
-      pre-commit-hooks:
-        patterns: ["*"]
-    open-pull-requests-limit: 10

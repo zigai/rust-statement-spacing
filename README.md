@@ -37,7 +37,6 @@ libraries = [
 cargo statement-spacing check
 ```
 
-
 ```sh
 cargo statement-spacing fix --format-first
 ```
