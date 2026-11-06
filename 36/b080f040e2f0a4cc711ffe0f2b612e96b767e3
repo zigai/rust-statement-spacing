@@ -1,0 +1,5 @@
+- cargo statement-spacing check on this repository takes 16.8 s on the first run and 1.7-2.1 s on later runs, down from 16-19 s every run
+- Old and new tools produce identical JSON reports (372 findings, 42 checked files) and identical fix --dry-run patches (35 files)
+- After deleting a blank line between two functions, a cached check reports the new item-spacing finding at diff.rs:57
+- With the run-id environment dependency removed, the second cached run fails with 'did not report a fresh compiler run'; with it, repeat runs pass
+- All 58 driver tests and the stamped just check pass
