@@ -1,0 +1,1 @@
+Verified working-tree Justfiles with just --list, just --dry-run build, and just --fmt --check; exact logs at /home/zigai/.cache/build-standard/verification.json. Own changes staged using git apply --cached --3way in a private index; unrelated staged/working hunks preserved; original hooks retained. No pushes, publishing, or actual deployments.
