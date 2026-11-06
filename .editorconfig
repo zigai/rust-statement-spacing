@@ -8,6 +8,21 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
+[*.{json,jsonc,yaml,yml,md,css}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.go]
+indent_style = tab
+
+[{Makefile,*.mk}]
+indent_style = tab
+
+[*.sh]
+switch_case_indent = true
+
 [*.{md,yml,yaml}]
 indent_size = 2
 
@@ -16,3 +31,6 @@ indent_size = 4
 
 [Justfile]
 indent_size = 2
+
+[**/{fixtures}/**]
+ignore = true

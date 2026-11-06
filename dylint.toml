@@ -1,6 +1,8 @@
 [statement_spacing]
 schema_version = 1
 enable = ["layout"]
+exclude = ["**/fixtures/**"]
+include_generated = false
 
 [statement_spacing.grouping]
 bindings = "multiline"
