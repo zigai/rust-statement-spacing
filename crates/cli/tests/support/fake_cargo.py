@@ -10,6 +10,7 @@ import hashlib
 import re
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 args = sys.argv[1:]
@@ -84,6 +85,37 @@ elif args[0] == "fmt":
             sys.exit(1)
 elif args[0] == "dylint":
     label = Path(os.environ["STATEMENT_SPACING_PROBE_DIR"]).name.split("-")[0]
+    if scenario == "build-git":
+        # Models build scripts that embed the commit and then touch Git state.
+        def git(*command, cwd=root):
+            return subprocess.run(
+                ["git", *command], cwd=cwd, capture_output=True, text=True
+            )
+
+        head = git("rev-parse", "HEAD")
+        expected = git("rev-parse", "HEAD", cwd=original).stdout
+        if head.returncode != 0 or (label == "initial" and head.stdout != expected):
+            print(
+                "build script: git rev-parse HEAD failed: " + head.stderr,
+                file=sys.stderr,
+            )
+            sys.exit(101)
+        for command in (
+            ("add", "-A"),
+            ("tag", "from-build"),
+            (
+                "-c",
+                "user.name=build",
+                "-c",
+                "user.email=build@example.invalid",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "--message",
+                "from build",
+            ),
+        ):
+            git(*command)
     if scenario == "clone-write":
         (root / "Cargo.toml").write_text(
             (root / "Cargo.toml").read_text() + "\n# build wrote this\n"

@@ -92,8 +92,18 @@ impl Driver {
         let replica = if self.options.command == "check" {
             root.clone()
         } else {
-            let replica = temporary.path().join("workspace");
+            let checkout = temporary.path().join("workspace");
+            let repository = workspace::Repository::locate(&root)?;
+            let replica = repository.as_ref().map_or_else(
+                || return checkout.clone(),
+                |r| return checkout.join(r.prefix()),
+            );
+
             workspace::copy_snapshot(&root, &replica, &original, &exclusions, &gitignores)?;
+
+            if let Some(repository) = repository {
+                repository.clone_for(&checkout, &temporary.path().join("git"))?;
+            }
 
             workspace::canonical(&replica)?
         };

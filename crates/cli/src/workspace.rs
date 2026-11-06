@@ -6,6 +6,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io;
 #[cfg(unix)]
@@ -261,6 +262,120 @@ impl GitIgnoreStack {
         }
 
         return false;
+    }
+}
+
+fn git(args: &[&OsStr]) -> Result<String> {
+    let output = Command::new("git").args(args).output()?;
+    if !output.status.success() {
+        return Err(failure(format!(
+            "git {} failed: {}",
+            args.join(OsStr::new(" ")).to_string_lossy(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    return Ok(String::from_utf8(output.stdout)?);
+}
+
+pub(crate) struct Repository {
+    common_dir: PathBuf,
+    prefix: PathBuf,
+    branch: Option<String>,
+    commit: Option<String>,
+}
+
+impl Repository {
+    pub(crate) fn locate(root: &Path) -> Result<Option<Self>> {
+        let located = Command::new("git")
+            .args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+                "--show-prefix",
+            ])
+            .current_dir(root)
+            .output()?;
+
+        if located.status.code() == Some(128) {
+            return Ok(None);
+        }
+
+        if !located.status.success() {
+            return Err(failure(format!(
+                "cannot locate the Git repository: {}",
+                String::from_utf8_lossy(&located.stderr).trim()
+            )));
+        }
+
+        let located = String::from_utf8(located.stdout)?;
+        let mut lines = located.lines();
+        let common_dir = PathBuf::from(
+            lines
+                .next()
+                .ok_or_else(|| return failure("missing Git common directory"))?,
+        );
+        let prefix = PathBuf::from(lines.next().unwrap_or_default());
+        let head = |args: &[&str]| -> Result<Option<String>> {
+            let output = Command::new("git").args(args).current_dir(root).output()?;
+            return Ok(output
+                .status
+                .success()
+                .then(|| return String::from_utf8_lossy(&output.stdout).trim().to_owned()));
+        };
+
+        return Ok(Some(Self {
+            common_dir,
+            prefix,
+            branch: head(&["symbolic-ref", "--quiet", "HEAD"])?,
+            commit: head(&["rev-parse", "--quiet", "--verify", "HEAD^{commit}"])?,
+        }));
+    }
+
+    pub(crate) fn prefix(&self) -> &Path {
+        return &self.prefix;
+    }
+
+    // Build scripts may run any Git command in the replica. A shared clone reads
+    // the original objects, but its refs, index, config, and hooks are private.
+    pub(crate) fn clone_for(&self, checkout: &Path, git_dir: &Path) -> Result<()> {
+        git(&[
+            "clone".as_ref(),
+            "--bare".as_ref(),
+            "--shared".as_ref(),
+            "--quiet".as_ref(),
+            "--".as_ref(),
+            self.common_dir.as_os_str(),
+            git_dir.as_os_str(),
+        ])?;
+
+        let hooks = git_dir.join("hooks");
+        let private = |args: &[&OsStr]| -> Result<String> {
+            return git(&[&["--git-dir".as_ref(), git_dir.as_os_str()], args].concat());
+        };
+        private(&["remote".as_ref(), "remove".as_ref(), "origin".as_ref()])?;
+        private(&["config".as_ref(), "core.bare".as_ref(), "false".as_ref()])?;
+        private(&[
+            "config".as_ref(),
+            "core.hooksPath".as_ref(),
+            hooks.as_os_str(),
+        ])?;
+
+        if let Some(branch) = &self.branch {
+            private(&["symbolic-ref".as_ref(), "HEAD".as_ref(), branch.as_ref()])?;
+        } else if let Some(commit) = &self.commit {
+            private(&[
+                "update-ref".as_ref(),
+                "--no-deref".as_ref(),
+                "HEAD".as_ref(),
+                commit.as_ref(),
+            ])?;
+        }
+
+        let mut link = OsString::from("gitdir: ");
+        link.push(git_dir);
+        link.push("\n");
+        fs::write(checkout.join(".git"), link.as_encoded_bytes())?;
+        return Ok(());
     }
 }
 

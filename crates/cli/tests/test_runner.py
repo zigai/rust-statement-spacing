@@ -563,6 +563,60 @@ class SnapshotTests(WorkspaceTest):
             self.assertEqual(code, 0, report)
             self.assertEqual(self.source.read_bytes(), FIXED)
 
+    def test_build_scripts_read_git_without_changing_the_original_repository(self):
+        fixture = self.root
+        for nested in (False, True):
+            with (
+                self.subTest(nested=nested),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                config = Path(directory)
+                env = self.git_environment(config)
+                repository = config / "repository"
+                repository.mkdir()
+                workspace = repository / "workspace" if nested else repository
+                (workspace / "src").mkdir(parents=True)
+                for name in ("Cargo.toml", "Cargo.lock", "src/lib.rs"):
+                    (workspace / name).write_bytes((fixture / name).read_bytes())
+                self.root = workspace
+                self.source = workspace / "src/lib.rs"
+
+                def git(*command):
+                    return subprocess.run(
+                        ["git", "-C", str(repository), *command],
+                        env=dict(os.environ, **env),
+                        capture_output=True,
+                        check=True,
+                    ).stdout
+
+                git("init", "--quiet")
+                git("add", "-A")
+                git(
+                    "-c",
+                    "user.name=author",
+                    "-c",
+                    "user.email=author@example.invalid",
+                    "commit",
+                    "--quiet",
+                    "--message",
+                    "initial",
+                )
+                state = (
+                    git("show-ref", "--head"),
+                    (repository / ".git/index").read_bytes(),
+                )
+
+                code, report = self.invoke(scenario="build-git", git_env=env)
+                self.assertEqual(code, 0, report)
+                self.assertEqual(self.source.read_bytes(), FIXED)
+                self.assertEqual(
+                    (
+                        git("show-ref", "--head"),
+                        (repository / ".git/index").read_bytes(),
+                    ),
+                    state,
+                )
+
     def test_links_cannot_bypass_external_excludes(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory)
