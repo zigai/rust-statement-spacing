@@ -14,7 +14,6 @@ fn basic_statement_separation() -> Result<(), Box<dyn Error>> {
     assert_eq!(result.edits().len(), 1);
     assert_eq!(fixed, "fn f() {\n    one();\n\n    two();\n}\n");
     assert!(structural(&fixed, &strict())?.1.findings.is_empty());
-
     return Ok(());
 }
 
@@ -29,7 +28,6 @@ fn single_line_boundary_has_diagnostic_without_fix() -> Result<(), Box<dyn Error
     assert_eq!(fixed, source);
     assert!(!result.findings.is_empty());
     assert!(result.edits().is_empty());
-
     return Ok(());
 }
 
@@ -42,7 +40,6 @@ fn layout_removes_only_whitespace_padding() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n\n    one();\n\n}\n";
     let config = Config::only(&[Rule::Layout]);
     assert_eq!(structural(source, &config)?.0, "fn f() {\n    one();\n}\n");
-
     return Ok(());
 }
 
@@ -61,6 +58,7 @@ fn multiline_phases_preserve_short_bindings_and_comment_attachments() -> Result<
     let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
+
     for list in &mut parsed.model.lists {
         for unit in &mut list.units {
             if source
@@ -76,11 +74,14 @@ fn multiline_phases_preserve_short_bindings_and_comment_attachments() -> Result<
             }
         }
     }
+
     let result = plan(&config, source, &parsed.model)?;
     assert_eq!(apply_edits(source, &result.edits())?, expected);
+
     let mut reparsed = parse_source(expected, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(reparsed.code_ranges());
     reparsed.attach(expected, &anchors);
+
     for list in &mut reparsed.model.lists {
         for unit in &mut list.units {
             if expected
@@ -96,15 +97,16 @@ fn multiline_phases_preserve_short_bindings_and_comment_attachments() -> Result<
             }
         }
     }
+
     assert!(
         plan(&config, expected, &reparsed.model)?
             .findings
             .is_empty()
     );
+
     config.grouping.bindings = Bindings::Preserve;
     config.grouping.expressions = Expressions::Preserve;
     assert_eq!(structural(source, &config)?.0, source);
-
     return Ok(());
 }
 
@@ -159,6 +161,7 @@ fn multiline_control_spacing_respects_checks_and_rule_suppression() -> Result<()
     let source = "fn f() {\n    let result = probe(\n        input,\n    );\n    if let Err(error) = result {\n        return;\n    }\n}\n";
     for (immediate_check, disabled) in [(false, false), (true, false), (false, true)] {
         let mut config = visual_config();
+
         if disabled {
             config.disable.push(Rule::ControlFlow);
         }
@@ -201,7 +204,6 @@ fn visual_config() -> Config {
     config.control_flow.guard_chain = GuardChain::Contextual;
     config.control_flow.related_continuation = false;
     config.exits.tail = Tail::Visual;
-
     return config;
 }
 
@@ -223,7 +225,6 @@ fn contextual_guards_distinguish_exiting_from_fallible_continuations() -> Result
         structural(fallible, &visual_config())?.0,
         fallible.replace("    finish();", "\n    finish();")
     );
-
     return Ok(());
 }
 
@@ -276,7 +277,6 @@ fn contextual_if_spacing_applies_in_loops_and_after_else() -> Result<(), Box<dyn
         structural(&continuing, &visual_config())?.0,
         continuing.replace("    finish();", "\n    finish();")
     );
-
     return Ok(());
 }
 
@@ -370,7 +370,6 @@ fn literal_loop_setup_stays_whole_when_exceeding_allowance() -> Result<(), Box<d
     config.grouping.max_before_control = 1;
     let result = plan(&config, source, &parsed.model)?;
     assert_eq!(apply_edits(source, &result.edits())?, source);
-
     return Ok(());
 }
 
@@ -399,7 +398,6 @@ fn visual_tails_distinguish_compact_values_from_completion_calls() -> Result<(),
         structural(completion, &visual_config())?.0,
         completion.replace("    Ok(value)", "\n    Ok(value)")
     );
-
     return Ok(());
 }
 
@@ -417,7 +415,6 @@ fn matching_terminal_error_adapters_do_not_connect_unrelated_bindings() -> Resul
             .replace("    let second", "\n    let second")
             .replace("    let third", "\n    let third")
     );
-
     return Ok(());
 }
 
@@ -429,7 +426,6 @@ fn matching_terminal_error_adapters_do_not_connect_unrelated_bindings() -> Resul
 fn final_macro_after_small_loop_is_compact_and_opaque() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    for value in values {\n        consume(value);\n    }\n    finish!({\n        first();\n        second();\n\n\n        third();\n    })\n}\n";
     assert_eq!(structural(source, &visual_config())?.0, source);
-
     return Ok(());
 }
 
@@ -474,7 +470,6 @@ fn multiline_destructuring_consumer_uses_positive_facts_when_effects_are_unknown
         apply_edits(source, &unrelated.edits())?,
         source.replace("    let result", "\n    let result")
     );
-
     return Ok(());
 }
 
@@ -492,6 +487,7 @@ fn normalized_pair(
     for list in &mut parsed.model.lists {
         for unit in &mut list.units {
             let text = source.get(unit.code_range.as_range()).unwrap_or("");
+
             if text == first {
                 unit.facts = facts[0].clone();
             } else if text == second {
@@ -501,7 +497,6 @@ fn normalized_pair(
     }
 
     let result = plan(config, source, &parsed.model)?;
-
     return apply_edits(source, &result.edits());
 }
 
@@ -727,7 +722,6 @@ fn normalization_respects_conditional_boundaries_and_comments() -> Result<(), Bo
     config.grouping.bindings = Bindings::Preserve;
     let preserved = "fn f() {\n    let left = 1;\n\n    let right = 2;\n}\n";
     assert_eq!(structural(preserved, &config)?.0, preserved);
-
     return Ok(());
 }
 
@@ -810,7 +804,6 @@ fn normalization_does_not_join_unknown_or_suppressed_relationships() -> Result<(
         normalized_pair(&compact, &config, conditional, consumer, &facts)?,
         compact.replace("    consume(value);", "\n    consume(value);")
     );
-
     return Ok(());
 }
 
@@ -1009,7 +1002,6 @@ fn test_action_checks_stay_attached_between_assertion_phases() -> Result<(), Box
 
     let fixed = normalized_pair(&loop_source, &config, action, check, &facts)?;
     assert!(fixed.contains(&format!("{action}\n        {check}")));
-
     return Ok(());
 }
 
@@ -1047,7 +1039,6 @@ fn assertion_phases_respect_test_scope_threshold_and_macro_shape() -> Result<(),
 
     let protected = tiny.replace("#[test]", "#[test]\n#[rustfmt::skip]");
     assert_eq!(structural(&protected, &config)?.0, protected);
-
     return Ok(());
 }
 
@@ -1063,7 +1054,6 @@ fn standalone_assertion_operations_end_before_cleanup() -> Result<(), Box<dyn Er
     let expected = source.replace("    let _", "\n    let _");
     assert_eq!(structural(source, &config)?.0, expected);
     assert_eq!(structural(&expected, &config)?.0, expected);
-
     return Ok(());
 }
 
@@ -1081,6 +1071,7 @@ fn action_assertion_and_shared_input_verification_form_one_step() -> Result<(), 
     let source = format!(
         "#[test]\nfn checks() {{\n    assert!(ready);\n    assert!(attached);\n\n    {action}\n    {check}\n    {verification}\n}}\n"
     );
+
     for input in [
         &source,
         &source.replace(verification, &format!("\n    {verification}")),
@@ -1092,6 +1083,7 @@ fn action_assertion_and_shared_input_verification_form_one_step() -> Result<(), 
         for list in &mut parsed.model.lists {
             for unit in &mut list.units {
                 let text = input.get(unit.code_range.as_range()).unwrap_or("");
+
                 if text == action {
                     unit.facts.definitions.insert(Place::local("response"));
                     unit.facts.reads.insert(Place::local("destination"));
@@ -1192,7 +1184,6 @@ fn audit_constants_keep_multiline_declarations_separate() -> Result<(), Box<dyn 
         structural("const A: u32 = 1;\n\nconst B: u32 = 2;\n", &config)?.0,
         "const A: u32 = 1;\nconst B: u32 = 2;\n"
     );
-
     return Ok(());
 }
 
@@ -1344,7 +1335,6 @@ fn audit_distinct_fallible_validators_and_ui_assignments() -> Result<(), Box<dyn
         )?,
         expected
     );
-
     return Ok(());
 }
 
@@ -1386,6 +1376,7 @@ fn audit_accumulator_suffix_is_bounded_and_separate_from_geometry() -> Result<()
         ] {
             let mut parsed = parse_source(input, "2024", None)?;
             let mut semantics = SemanticIndex::structural_anchors(parsed.code_ranges());
+
             for name in &names {
                 let declaration = format!("let mut {name}");
                 let start =
@@ -1457,7 +1448,6 @@ fn audit_accumulator_exception_respects_scope_and_rule_settings() -> Result<(), 
         normalized_pair(&source, &config, setup, control, &facts)?,
         source.replace("\n\n", "\n")
     );
-
     return Ok(());
 }
 
@@ -1551,6 +1541,7 @@ fn audit_following_control_does_not_split_preparation() -> Result<(), Box<dyn Er
             for list in &mut parsed.model.lists {
                 for unit in &mut list.units {
                     let text = input.get(unit.code_range.as_range()).unwrap_or("");
+
                     if text == first {
                         unit.facts.definitions.insert(Place::local("t"));
                     } else if text == second {
@@ -1599,7 +1590,6 @@ fn audit_conditional_repeat_excludes_pattern_shadowing() -> Result<(), Box<dyn E
         normalized_pair(&source, &config, action, conditional, &facts)?,
         source
     );
-
     return Ok(());
 }
 
@@ -1616,8 +1606,8 @@ fn mutation_assertions_require_the_changed_value() -> Result<(), Box<dyn Error>>
     for action in ["value = empty();", "value.clear();"] {
         for related in [true, false] {
             let target = Place::local(if related { "value" } else { "other" });
-
             let mut action_facts = Facts::default();
+
             if action.contains("clear") {
                 action_facts.mutating_receivers.insert(target);
             } else {
@@ -1659,6 +1649,7 @@ fn loop_body_statement_counts() -> Result<(), Box<dyn Error>> {
     let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
+
     let mut counts = Vec::new();
     for list in &parsed.model.lists {
         for unit in &list.units {
@@ -1667,6 +1658,7 @@ fn loop_body_statement_counts() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+
     assert_eq!(counts, vec![Some(1), Some(2), Some(0)]);
     return Ok(());
 }
@@ -1692,6 +1684,7 @@ fn pinned_values_mark_content_assertions() -> Result<(), Box<dyn Error>> {
     let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
+
     let mut flags = Vec::new();
     for list in &parsed.model.lists {
         for unit in &list.units {
@@ -1700,6 +1693,7 @@ fn pinned_values_mark_content_assertions() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+
     assert_eq!(
         flags,
         vec![true, true, true, false, false, false, false, false, true]
@@ -1721,6 +1715,7 @@ fn module_docs_separate_from_declarations() -> Result<(), Box<dyn Error>> {
     assert_eq!(structural(spaced, &config)?.0, spaced);
     return Ok(());
 }
+
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -1752,6 +1747,7 @@ fn size_sanity_checks_do_not_pin() -> Result<(), Box<dyn Error>> {
     let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
+
     let mut flags = Vec::new();
     for list in &parsed.model.lists {
         for unit in &list.units {
@@ -1760,6 +1756,7 @@ fn size_sanity_checks_do_not_pin() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+
     assert_eq!(flags, vec![false, false, false, true]);
     return Ok(());
 }
@@ -1784,12 +1781,14 @@ type VisualCase = (
 fn compiled_visual(source: &str, uses: &[(Use, &str)]) -> Result<String, Box<dyn Error>> {
     let mut parsed = parse_source(source, "2024", None)?;
     let mut index = SemanticIndex::structural_anchors(parsed.code_ranges());
+
     for (role, marked) in uses {
         let needle = marked.replace('`', "");
         let mut found = source.match_indices(&needle);
         let (Some((offset, _)), None) = (found.next(), found.next()) else {
             return Err(format!("{needle:?} must occur exactly once").into());
         };
+
         let (Some(open), Some(close)) = (marked.find('`'), marked.rfind('`')) else {
             return Err(format!("{marked:?} must mark its event with backticks").into());
         };
@@ -1801,6 +1800,7 @@ fn compiled_visual(source: &str, uses: &[(Use, &str)]) -> Result<String, Box<dyn
             projections: segments.map(|field| return format!(".{field}")).collect(),
             is_self: false,
         };
+
         let kinds = match role {
             Use::Define => vec![EventKind::Define],
             Use::Read => vec![EventKind::Read],
@@ -1822,6 +1822,7 @@ fn compiled_visual(source: &str, uses: &[(Use, &str)]) -> Result<String, Box<dyn
                 continue;
             }
         };
+
         for kind in kinds {
             index.events.push(Event {
                 range,
@@ -1830,12 +1831,14 @@ fn compiled_visual(source: &str, uses: &[(Use, &str)]) -> Result<String, Box<dyn
             });
         }
     }
+
     parsed.attach(source, &index);
 
     let mut config = visual_config();
     config.grouping.join_related = true;
     let result = plan(&config, source, &parsed.model)?;
     let fixed = apply_edits(source, &result.edits())?;
+
     if token_fingerprint(source, "2024")? != token_fingerprint(&fixed, "2024")? {
         return Err("token fingerprint mismatch after edits".into());
     }
@@ -2145,6 +2148,7 @@ fn visual_returns_attach_only_to_the_values_their_step_produced() -> Result<(), 
 ",
         ),
     ];
+
     for (name, source, uses, expected) in cases {
         assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
     }
@@ -2284,6 +2288,7 @@ fn visual_bare_completion_exits_stay_with_the_step_they_close() -> Result<(), Bo
 ",
         ),
     ];
+
     for (name, source, uses, expected) in cases {
         assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
     }
@@ -2817,6 +2822,7 @@ fn visual_bindings_continue_only_the_step_whose_output_they_use() -> Result<(), 
 ",
         ),
     ];
+
     for (name, source, uses, expected) in cases {
         assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
     }
@@ -3030,6 +3036,7 @@ fn visual_repeated_operations_group_by_inputs_and_error_handler() -> Result<(), 
 ",
         ),
     ];
+
     for (name, source, uses, expected) in cases {
         assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
     }
@@ -3150,6 +3157,7 @@ fn runs_tool() {
 ",
         ),
     ];
+
     for (name, source, uses, expected) in cases {
         assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
     }
@@ -3278,6 +3286,7 @@ fn visual_contextual_guards_separate_from_setup_they_do_not_check() -> Result<()
 ",
         ),
     ];
+
     for (name, source, uses, expected) in cases {
         assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
     }
@@ -3567,6 +3576,7 @@ fn collects() {
 ",
         ),
     ];
+
     for (name, source, uses, expected) in cases {
         assert_eq!(compiled_visual(source, uses)?, expected, "{name}");
     }

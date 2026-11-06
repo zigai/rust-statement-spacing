@@ -112,7 +112,6 @@ fn tail(text: &str) -> &str {
         .rev()
         .nth(7999)
         .map_or(0, |(index, _)| return index);
-
     return text.get(start..).unwrap_or("");
 }
 
@@ -334,6 +333,7 @@ impl Driver {
         require_success: bool,
     ) -> Result<RunResult> {
         let executor = executor()?;
+
         check_interrupted()?;
 
         let (program, rest) = args
@@ -410,6 +410,7 @@ impl Driver {
 
                     return Ok::<_, io::Error>((status?, out_result?, err_result?));
                 };
+
                 tokio::pin!(communication);
                 let outcome = tokio::select! {
                     biased;
@@ -606,8 +607,8 @@ impl Driver {
         let cargo = self.run(args, root, None, true)?.stdout.trim().to_owned();
         let mut args = self.formatter_cargo();
         args.extend(["fmt".into(), "--version".into()]);
-
         let rustfmt = self.run(args, root, None, true)?.stdout.trim().to_owned();
+
         if cargo.is_empty() || rustfmt.is_empty() {
             return Err(failure("formatter identity could not be established"));
         }
@@ -672,6 +673,7 @@ impl Driver {
     ) -> Result<LintResult> {
         let probes = temporary.join(format!("{label}-probes"));
         fs::create_dir_all(&probes)?;
+
         let mut random = [0_u8; 24];
         random_bytes(&mut random)?;
 
@@ -834,6 +836,7 @@ impl Driver {
         paths.sort();
 
         let mut handshakes = Vec::new();
+
         for path in paths {
             let metadata = fs::symlink_metadata(&path)?;
             if !metadata.is_file() || metadata.len() > MAX_JSON_BYTES {
@@ -841,6 +844,7 @@ impl Driver {
             }
 
             let data: Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+
             if data.get("schema").and_then(Value::as_i64) != Some(1)
                 || data.get("library").and_then(Value::as_str) != Some("statement_spacing")
                 || data.get("version").and_then(Value::as_str) != Some(VERSION)
@@ -895,6 +899,7 @@ impl Driver {
         let mut files = BTreeSet::new();
         let mut token_hashes = BTreeMap::new();
         let mut skipped_boundaries = 0_u64;
+
         for data in handshakes {
             let hashes = data
                 .get("token_hashes")
@@ -927,6 +932,7 @@ impl Driver {
                                 "invalid/missing source token fingerprint for {relative}"
                             ));
                         })?;
+
                     if token_hashes
                         .get(&relative)
                         .is_some_and(|previous| return previous != fingerprint)
@@ -1008,7 +1014,6 @@ mod tests {
         fs::write(&path, "[toolchain]\nchannel = \"1.97.1\"\n")?;
 
         assert_eq!(detect_toolchain(temp.path()), Some("1.97.1".to_owned()));
-
         return Ok(());
     }
 
@@ -1028,7 +1033,6 @@ mod tests {
 
         fs::write(&path, "[workspace]\nmembers = []\n")?;
         assert!(!has_dylint_metadata(&path));
-
         return Ok(());
     }
 }

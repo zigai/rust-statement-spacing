@@ -94,8 +94,10 @@ impl Driver {
         } else {
             let replica = temporary.path().join("workspace");
             workspace::copy_snapshot(&root, &replica, &original, &exclusions, &gitignores)?;
+
             workspace::canonical(&replica)?
         };
+
         let target = self.lint_target(&root)?;
         let mut args = self.formatter_cargo();
         args.extend([
@@ -116,6 +118,7 @@ impl Driver {
             let before_layout = workspace::scan(&replica, limit, &exclusions, &gitignores)?;
             let mut layout =
                 self.lint(&replica, temporary.path(), &target, "declarations", &root)?;
+
             workspace::assert_snapshot(&replica, &before_layout, limit, &exclusions, &gitignores)?;
             layout
                 .edits

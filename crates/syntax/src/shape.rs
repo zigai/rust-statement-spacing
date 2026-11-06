@@ -272,7 +272,6 @@ pub(crate) fn shape(node: &SyntaxNode) -> Shape {
             || return expression.clone(),
             |expr| return expr.syntax().clone(),
         );
-
     let (fallible, string_inputs) = immediate_inputs(&initializer);
     let root = unwrapped(initializer.clone());
     let form = if node

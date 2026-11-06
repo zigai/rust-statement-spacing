@@ -15,8 +15,10 @@ impl Protection {
                 inherited = known;
                 break;
             }
+
             pending.push(ancestor);
         }
+
         for ancestor in pending.into_iter().rev() {
             inherited = inherited || attributes_protect(&ancestor);
             self.known.insert(ancestor, inherited);
@@ -106,6 +108,7 @@ fn attributes_protect(ancestor: &SyntaxNode) -> bool {
                     | "type_length_limit"
                     | "feature"
             );
+
             let derive_helper = derived
                 && matches!(
                     name,
