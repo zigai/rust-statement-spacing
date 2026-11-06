@@ -1,0 +1,1 @@
+Verified cargo metadata --offline --no-deps --format-version 1 parses the changed manifest; preserved existing release keys. Full stamp check skipped as requested.
