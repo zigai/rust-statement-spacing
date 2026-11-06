@@ -617,12 +617,10 @@ impl Driver {
 
     pub(crate) fn fmt(&mut self, root: &Path, write: bool) -> Result<()> {
         let mut args = self.formatter_cargo();
-        args.extend([
-            "fmt".into(),
-            "--all".into(),
-            "--manifest-path".into(),
-            root.join("Cargo.toml").to_string_lossy().into_owned(),
-        ]);
+        // Run from the workspace root without --all or --manifest-path: --all also formats
+        // path dependencies outside the workspace (such as excluded vendored crates), and
+        // --manifest-path makes cargo fmt skip the members of a virtual workspace.
+        args.push("fmt".into());
 
         if !write {
             args.extend(["--".into(), "--check".into()]);
