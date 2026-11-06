@@ -37,6 +37,7 @@ impl Driver {
 
     pub(crate) fn execute(&mut self) -> Result<u8> {
         cargo::setup_cancellation()?;
+
         let limit = self.options.max_snapshot_mib * 1024 * 1024;
         let exclusions = self
             .options
@@ -58,6 +59,7 @@ impl Driver {
         }
 
         let unfinished = root.join(".statement-spacing/transactions");
+
         if unfinished.exists() && fs::read_dir(&unfinished)?.next().transpose()?.is_some() {
             return Err(failure(
                 "unfinished transaction found; run cargo statement-spacing recover first",
@@ -158,6 +160,7 @@ impl Driver {
             };
 
         let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
+
         for finding in &first.findings {
             let rule = finding
                 .get("rule")
@@ -171,8 +174,10 @@ impl Driver {
         self.set_report("checked_files", json!(first.checked_files));
         self.set_report("skipped_boundaries", json!(first.skipped_boundaries));
         cargo::check_interrupted()?;
+
         if self.options.command == "check" {
             workspace::assert_snapshot(&root, &original, limit, &exclusions, &gitignores)?;
+
             if let Some(path) = &self.options.write_baseline {
                 let document = baseline_document
                     .as_ref()
@@ -251,6 +256,7 @@ impl Driver {
 
         self.set_report("proposed_files", json!(changed.keys().collect::<Vec<_>>()));
         cargo::check_interrupted()?;
+
         if self.options.dry_run {
             workspace::assert_snapshot(&root, &original, limit, &exclusions, &gitignores)?;
             if self.identity(&root)? != identity {
@@ -304,6 +310,7 @@ impl Driver {
 
         if changed.is_empty() {
             workspace::assert_snapshot(&root, &original, limit, &exclusions, &gitignores)?;
+
             let mut final_check = final_check;
             final_check()?;
         } else {

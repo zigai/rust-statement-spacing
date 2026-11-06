@@ -79,7 +79,6 @@ fn quote_path(path: &str) -> String {
     }
 
     result.push('"');
-
     return result;
 }
 
@@ -111,6 +110,7 @@ mod tests {
             let name = "source with spaces.rs";
             let source = directory.path().join(name);
             fs::write(&source, before)?;
+
             let patch = directory.path().join("preview.patch");
             fs::write(&patch, unified(name, before, after)?)?;
             let output = Command::new("git")

@@ -65,11 +65,13 @@ pub(super) fn apply(
                 .get(a.code_range.as_range())
                 .is_some_and(|text| return !text.contains('\n'))
             && b.shape.form != Form::CallCheck;
+
         let covered = header_covered_by(
             &a.facts.definitions,
             &b.facts.header_reads,
             config.grouping.self_fields,
         );
+
         if rejection_gate && covered {
             put(
                 global_rules,
@@ -151,6 +153,7 @@ pub(super) fn apply(
                 &b.facts.receivers,
                 config.grouping.self_fields,
             );
+
         if fresh_after_check {
             put(
                 global_rules,
@@ -169,6 +172,7 @@ pub(super) fn apply(
                 .get(b.code_range.as_range())
                 .is_some_and(|text| return text.trim() == "continue;")
             && a.kind == UnitKind::Expression;
+
         if retry_continue {
             put(
                 global_rules,
@@ -187,6 +191,7 @@ pub(super) fn apply(
             && source
                 .get(b.code_range.as_range())
                 .is_some_and(|text| return text.trim() == "return Ok(());");
+
         if ok_close {
             put(
                 global_rules,
@@ -212,6 +217,7 @@ pub(super) fn apply(
                 &b.facts.reads,
                 config.grouping.self_fields,
             );
+
         if unpack {
             put(
                 global_rules,
@@ -242,6 +248,7 @@ pub(super) fn apply(
                 && call.ends_with("()")
                 && call.chars().filter(|mark| return *mark == '(').count() == 1;
         }
+
         let cleanup_call = b.kind == UnitKind::Let
             && a.kind.ordinary()
             && a.shape.role != StatementRole::Assertion
@@ -251,6 +258,7 @@ pub(super) fn apply(
             && source
                 .get(b.code_range.as_range())
                 .is_some_and(ignored_argless_method);
+
         if cleanup_call {
             put(
                 global_rules,
@@ -278,6 +286,7 @@ pub(super) fn apply(
                     || head.starts_with("let _ = print!(")
                     || head.starts_with("let _ = println!(");
             });
+
         if ignored_emit {
             put(
                 global_rules,
@@ -289,9 +298,11 @@ pub(super) fn apply(
         }
 
         let mut step_places = outputs(&a.facts);
+
         if config.exits.tail == Tail::Visual {
             step_places.extend(a.facts.reads.iter().cloned());
         }
+
         let passthrough = compact_exit
             && b.kind == UnitKind::Exit
             && a.kind.ordinary()
@@ -308,6 +319,7 @@ pub(super) fn apply(
                                         config.grouping.self_fields,
                                     )));
                     })));
+
         if passthrough {
             put(
                 global_rules,
@@ -327,6 +339,7 @@ pub(super) fn apply(
                 if text.contains('{') {
                     return false;
                 }
+
                 let trimmed = text.trim();
                 if let Some(inner) = trimmed
                     .strip_prefix("return Ok(")
@@ -341,6 +354,7 @@ pub(super) fn apply(
                     config.grouping.self_fields,
                 );
             });
+
         if tail_call {
             put(
                 global_rules,
@@ -433,7 +447,6 @@ pub(super) fn apply(
                     join(rule, "keep this test assertion step together")
                 },
             );
-
             continue;
         }
 
@@ -505,10 +518,12 @@ pub(super) fn apply(
 
         let visual_tail =
             config.exits.tail == Tail::Visual && visual::compact_tail(config, source, list, a, b);
+
         let mut earlier = BTreeSet::new();
         for unit in list.units.iter().take(i) {
             earlier.extend(unit.facts.definitions.iter().cloned());
         }
+
         let echoes_input = a.shape.fallible
             && intersects(
                 &a.facts.definitions,
@@ -522,6 +537,7 @@ pub(super) fn apply(
                     config.grouping.self_fields,
                 );
             });
+
         let delegates =
             intersects(
                 &a.facts.definitions,
@@ -529,6 +545,7 @@ pub(super) fn apply(
                 config.grouping.self_fields,
             ) && (merges_flows(&a.facts, &b.facts, &earlier, config.grouping.self_fields)
                 || echoes_input);
+
         let failure_report = source.get(b.code_range.as_range()).is_some_and(|text| {
             return text.trim_start().starts_with("return Err(") && text.contains('{');
         }) && list.units.iter().any(|unit| {
@@ -538,6 +555,7 @@ pub(super) fn apply(
                 config.grouping.self_fields,
             );
         });
+
         let continues_step = intersects(
             &a.facts.definitions,
             &b.facts.reads,
@@ -636,6 +654,7 @@ pub(super) fn apply(
             || drain_chain
             || cleanup_exit
             || cohesive.get(i) == Some(&true);
+
         if a.kind.ends_block()
             && !attaches_after_block
             && config.control_flow.after_block == Separation::Separate
@@ -709,6 +728,7 @@ pub(super) fn apply(
                 .is_none_or(|text| return !text.contains('\n'))
             && !a.shape.fallible
             && a.kind != UnitKind::Control;
+
         if config.grouping.bindings == Bindings::Multiline
             && a.kind.is_binding()
             && b.shape.form == Form::Macro
@@ -754,7 +774,6 @@ pub(super) fn apply(
                     == Relationship::Unrelated)
                     .then_some("separate these binding phases"),
             };
-
             if let Some(reason) = reason {
                 put(
                     global_rules,
@@ -774,7 +793,6 @@ pub(super) fn apply(
                     && !visual::related_join(config, source, a, b))
                 .then_some("separate these operation phases"),
             };
-
             if let Some(reason) = reason {
                 let rule = if a.kind.is_binding() || b.kind.is_binding() {
                     Rule::Bindings

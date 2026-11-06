@@ -40,10 +40,12 @@ pub(crate) fn validate_edits<'edits>(
     sorted.sort_by_key(|edit| return (edit.range.start, edit.range.end));
 
     let mut previous: Option<&Edit> = None;
+
     for edit in &sorted {
         let old = source.get(edit.range.as_range()).ok_or_else(|| {
             return "edit is outside source or splits a UTF-8 character".to_string();
         })?;
+
         if old != edit.expected {
             return Err("stale source: expected trivia differs".into());
         }
@@ -83,6 +85,5 @@ pub fn blank_line_replacement(gap: &str, blank_lines: usize) -> Option<String> {
     let mut result = prefix.to_string();
     result.push_str(&"\n".repeat(blank_lines));
     result.push_str(suffix);
-
     return Some(result);
 }

@@ -84,6 +84,7 @@ pub(crate) fn filter(
     }
 
     let baseline: Value = serde_json::from_slice(&fs::read(path)?)?;
+
     if baseline.get("schema").and_then(Value::as_u64) != Some(1)
         || baseline.get("version").and_then(Value::as_str) != Some(VERSION)
         || baseline.get("coverage") != Some(coverage)
@@ -99,11 +100,13 @@ pub(crate) fn filter(
         .ok_or_else(|| return failure("invalid baseline findings"))?;
 
     let mut counts = BTreeMap::new();
+
     for (fingerprint, count) in entries {
         let count = count
             .as_u64()
             .filter(|count| return *count != 0)
             .ok_or_else(|| return failure("invalid baseline finding count"))?;
+
         if fingerprint.len() != 64
             || !fingerprint
                 .bytes()
@@ -123,7 +126,6 @@ pub(crate) fn filter(
             && *count > 0
         {
             *count -= 1;
-
             return false;
         }
         return true;

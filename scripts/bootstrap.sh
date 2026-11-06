@@ -3,7 +3,10 @@
 # Does not change any consumer project's Rust files. Requires rustup + Python 3.11+.
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-command -v rustup >/dev/null || { echo 'Install rustup first.' >&2; exit 1; }
+command -v rustup >/dev/null || {
+    echo 'Install rustup first.' >&2
+    exit 1
+}
 python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ is required"'
 rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
 rustup toolchain install nightly-2026-08-20 --profile minimal \

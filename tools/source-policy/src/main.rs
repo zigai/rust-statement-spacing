@@ -36,7 +36,6 @@ fn stub_calls(source: &str) -> Vec<usize> {
             let [t0, ..] = tokens else {
                 return None;
             };
-
             return Some(u32::from(t0.text_range().start()) as usize);
         })
         .collect();
@@ -89,7 +88,6 @@ fn scan(root: &Path) -> Result<Vec<String>, Box<dyn Error>> {
     }
 
     violations.sort();
-
     return Ok(violations);
 }
 

@@ -28,6 +28,7 @@ pub(super) fn apply(
     // Reconsider affected groups before exposing edits, not on a later fix pass.
     for _ in 0..=list.gaps.len() {
         let mut changed = false;
+
         for control in 1..list.units.len() {
             let Some(unit) = list.units.get(control) else {
                 continue;
@@ -37,7 +38,6 @@ pub(super) fn apply(
             let Some(gap_unit) = list.units.get(gap) else {
                 continue;
             };
-
             if unit.kind != UnitKind::Control
                 || !gap_unit.kind.ordinary()
                 || !enabled(global_rules, unit, Rule::ControlFlow)
@@ -128,12 +128,14 @@ pub(super) fn apply(
                     } else {
                         gap
                     };
+
                     let feeds_loop = config.grouping.max_before_control != 0
                         && boundary == gap
                         && list.units.get(boundary).is_some_and(|before| {
                             return list.units.get(boundary + 1).is_some_and(|after| {
                                 let mut mutated = after.facts.writes.clone();
                                 mutated.extend(after.facts.mutating_receivers.iter().cloned());
+
                                 return intersects(
                                     &before.facts.definitions,
                                     &mutated,
@@ -141,6 +143,7 @@ pub(super) fn apply(
                                 );
                             });
                         });
+
                     if feeds_loop {
                         continue;
                     }
@@ -169,6 +172,7 @@ pub(super) fn apply(
             }
 
             let mut group_start = gap;
+
             while group_start > 0 {
                 let previous_gap = group_start - 1;
                 if blocked(list, previous_gap)
@@ -189,6 +193,7 @@ pub(super) fn apply(
             let mut accepted_start = control;
             let mut accumulator_start = control;
             let mut unknown = false;
+
             for candidate in (group_start..control).rev() {
                 let Some(setup) = list.units.get(candidate) else {
                     break;
@@ -280,6 +285,7 @@ pub(super) fn apply(
                     &unit.facts.captures,
                     config.grouping.self_fields,
                 );
+
             if unknown
                 && accepted_start == control
                 && config.grouping.max_before_control != 0
@@ -316,6 +322,7 @@ pub(super) fn apply(
                             control - accumulator_start,
                             control,
                         );
+
                         let accumulators = if split {
                             0
                         } else {
@@ -351,11 +358,13 @@ pub(super) fn apply(
                     }
                 }
             };
+
             let lone_setup = control - accepted_start == 1
                 && gap_unit.kind == UnitKind::Let
                 && source
                     .get(gap_unit.code_range.as_range())
                     .is_some_and(|text| return !text.contains('\n'));
+
             let conditional_split = boundary.is_none()
                 && config.grouping.bindings != Bindings::Preserve
                 && matches!(unit.shape.form, Form::Conditional | Form::CallCheck)
@@ -366,9 +375,11 @@ pub(super) fn apply(
                     &unit.facts.header_reads,
                     config.grouping.self_fields,
                 );
+
             let traversal_split = boundary.is_none()
                 && substantial_loop(config, list, unit)
                 && accumulator_start == control - 1;
+
             if conditional_split || traversal_split {
                 boundary = Some(gap);
             }
@@ -451,6 +462,7 @@ fn attach_preparation(
         }
 
         let mut start = control - 1;
+
         while start > 0 {
             let gap = start - 1;
             let (Some(a), Some(b)) = (list.units.get(gap), list.units.get(start)) else {
@@ -518,6 +530,7 @@ fn split_accumulator_run(
     if !substantial_loop(config, list, unit) {
         return false;
     }
+
     if run_len <= 1
         && unit
             .shape
@@ -572,6 +585,7 @@ fn attach_accumulators(
         }
 
         let mut start = control;
+
         while start > 0 {
             let candidate = start - 1;
             let Some(setup) = list.units.get(candidate) else {
@@ -606,6 +620,7 @@ fn attach_accumulators(
 
             start = candidate;
         }
+
         if start == control || control - start > 4 {
             continue;
         }
@@ -618,12 +633,14 @@ fn attach_accumulators(
                     for setup in run {
                         definitions.extend(setup.facts.definitions.iter().cloned());
                     }
+
                     return header_covered_by(
                         &definitions,
                         &unit.facts.header_reads,
                         config.grouping.self_fields,
                     );
                 }));
+
         if attach {
             for gap in start..control {
                 put(
@@ -650,6 +667,7 @@ fn attach_accumulators(
                     ),
                 );
             }
+
             if control > 0 {
                 put(
                     global_rules,
@@ -677,8 +695,10 @@ fn attach_accumulators(
                                 return !text.contains('\n') && text.contains('(');
                             })));
             });
+
         let prev_feeds_run =
             start > 0 && unique_feeder_before(&list.units, start - 1, config.grouping.self_fields);
+
         if start > 0
             && !prev_is_accumulator
             && !prev_feeds_run

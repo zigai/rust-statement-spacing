@@ -53,7 +53,6 @@ fn error_sink(node: SyntaxNode) -> Option<String> {
             .and_then(|n| return n.children().find(|n| return n.kind() == SyntaxKind::PATH)),
         _ => None,
     };
-
     return path.map(|path| return path.text().to_string());
 }
 
@@ -117,6 +116,7 @@ fn pins_value(root: &SyntaxNode) -> bool {
     }) {
         return false;
     }
+
     let Some(tree) = call.token_tree() else {
         return false;
     };
@@ -146,6 +146,7 @@ fn pins_value(root: &SyntaxNode) -> bool {
         }
         _ => false,
     };
+
     return literal
         && !actual
             .syntax()
@@ -158,6 +159,7 @@ fn is_size_named(argument: &str) -> bool {
     let stripped = argument.trim().trim_matches(|mark| {
         return mark == '(' || mark == ')' || mark == '&' || mark == '*' || mark == ' ';
     });
+
     let tail = stripped.rsplit(['.', ':']).next().unwrap_or(stripped);
     let name = tail.trim();
     if name.is_empty() {
@@ -244,6 +246,7 @@ fn loop_body_statements(expression: &SyntaxNode) -> Option<usize> {
     ) {
         return None;
     }
+
     let start = control_body_start(expression)?;
     let body = expression.children().find(|child| {
         return child.kind() == SyntaxKind::BLOCK_EXPR && range(child).start == start;
@@ -344,6 +347,7 @@ pub(crate) fn shape(node: &SyntaxNode) -> Shape {
             let body = conditional.then_branch()?.stmt_list()?;
             let mut statements = body.syntax().children().filter(is_unit);
             let statement = statements.next()?;
+
             if statements.next().is_some()
                 || expression_node(&statement).kind() != SyntaxKind::METHOD_CALL_EXPR
             {

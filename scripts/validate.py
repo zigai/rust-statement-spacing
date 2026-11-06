@@ -116,10 +116,16 @@ def main():
                     dependency = fixture / "vendor/native-library"
                     (dependency / "zig-out").mkdir(parents=True)
                     (dependency / ".zig-cache").mkdir()
-                    (dependency / ".git").write_text("gitdir: ../../.git/modules/native-library\n")
+                    (dependency / ".git").write_text(
+                        "gitdir: ../../.git/modules/native-library\n"
+                    )
                     (dependency / ".gitignore").write_text("/zig-out/\n/.zig-cache/\n")
-                    (dependency / "zig-out/artifact").write_bytes(b"ignored build output")
-                    (dependency / ".zig-cache/artifact").write_bytes(b"ignored cache output")
+                    (dependency / "zig-out/artifact").write_bytes(
+                        b"ignored build output"
+                    )
+                    (dependency / ".zig-cache/artifact").write_bytes(
+                        b"ignored cache output"
+                    )
                     (dependency / "source.txt").write_text("dependency source\n")
                     source = fixture / "src/lib.rs"
                     before = source.read_bytes()
@@ -140,21 +146,32 @@ def main():
                     assert len(first_report["findings"]) == 1, (
                         "library and test compilations duplicated a finding"
                     )
-                    assert first_report["rule_counts"] == {"statement_spacing_bindings": 1}
+                    assert first_report["rule_counts"] == {
+                        "statement_spacing_bindings": 1
+                    }
                     assert any(
                         f["rule"] == "statement_spacing_bindings"
                         for f in first_report["findings"]
                     )
                     assert source.read_bytes() == before, "check modified source"
-                    preview = run(base + ["fix", "--dry-run", "--diff", *arguments], fixture, expected=(1,))
+                    preview = run(
+                        base + ["fix", "--dry-run", "--diff", *arguments],
+                        fixture,
+                        expected=(1,),
+                    )
                     preview_report = json.loads(preview.stdout)
                     assert preview_report["verified"]["second_lint_run_clean"]
                     assert preview_report["changed_files"] == []
                     assert preview_report["diff"].startswith("--- ")
                     assert source.read_bytes() == before, "preview modified source"
                     baseline = temporary / "baseline.json"
-                    run(base + ["check", "--write-baseline", baseline, *arguments], fixture)
-                    baselined = run(base + ["check", "--baseline", baseline, *arguments], fixture)
+                    run(
+                        base + ["check", "--write-baseline", baseline, *arguments],
+                        fixture,
+                    )
+                    baselined = run(
+                        base + ["check", "--baseline", baseline, *arguments], fixture
+                    )
                     assert json.loads(baselined.stdout)["baseline_matched"] == 1
                     assert source.read_bytes() == before, "baseline modified source"
                     fixed = run(base + ["fix", *arguments], fixture)
@@ -162,8 +179,12 @@ def main():
                     assert source.read_bytes() == expected, (
                         "fixed output differs from explicit golden file"
                     )
-                    assert (dependency / "zig-out/artifact").read_bytes() == b"ignored build output"
-                    assert (dependency / "source.txt").read_text() == "dependency source\n"
+                    assert (
+                        dependency / "zig-out/artifact"
+                    ).read_bytes() == b"ignored build output"
+                    assert (
+                        dependency / "source.txt"
+                    ).read_text() == "dependency source\n"
                     run(["cargo", "+1.99.1", "fmt", "--all", "--", "--check"], fixture)
                     again = run(base + ["fix", *arguments], fixture)
                     assert not json.loads(again.stdout)["changed_files"], (
@@ -195,7 +216,9 @@ def main():
                         b"let registered = generated.len();\n\n    let mut checked_in",
                     ):
                         assert boundary in compact
-                        compact = compact.replace(boundary, boundary.replace(b"\n\n", b"\n"))
+                        compact = compact.replace(
+                            boundary, boundary.replace(b"\n\n", b"\n")
+                        )
                     source.write_bytes(compact)
                     run(base + ["fix", *arguments], fixture)
                     assert source.read_bytes() == grouped, (
@@ -210,10 +233,10 @@ def main():
                     audit = (ROOT / "tests/fixtures/audit.rs").read_bytes()
                     source.write_bytes(audit)
                     (fixture / "dylint.toml").write_text(
-                        '[statement_spacing.grouping]\n'
+                        "[statement_spacing.grouping]\n"
                         'bindings="multiline"\nexpressions="multiline"\n'
                         'self_fields="distinct"\njoin_related=true\n'
-                        '[statement_spacing.control_flow]\n'
+                        "[statement_spacing.control_flow]\n"
                         'guard_chain="contextual"\nrelated_continuation=false\n'
                         '[statement_spacing.exits]\ntail="visual"\n'
                     )
@@ -224,7 +247,10 @@ def main():
                         .replace(b"\n\n    fs::remove_file", b"\n    fs::remove_file")
                         .replace(b"* u128::from(width);\n\n", b"* u128::from(width);\n")
                         .replace(b"entry.value.trim();\n\n", b"entry.value.trim();\n")
-                        .replace(b"validate_target(target)?;\n\n", b"validate_target(target)?;\n"),
+                        .replace(
+                            b"validate_target(target)?;\n\n",
+                            b"validate_target(target)?;\n",
+                        ),
                         audit.replace(b"    let mut health", b"\n    let mut health")
                         .replace(b"    let mut last_dash", b"\n    let mut last_dash")
                         .replace(b"    for clip", b"\n    for clip")
@@ -244,7 +270,10 @@ def main():
                         run(base + ["fix", *arguments], fixture)
                         assert source.read_bytes() == audit, "audit grouping regression"
                         run(base + ["check", *arguments], fixture)
-                        run(["cargo", "+1.99.1", "fmt", "--all", "--", "--check"], fixture)
+                        run(
+                            ["cargo", "+1.99.1", "fmt", "--all", "--", "--check"],
+                            fixture,
+                        )
                     source.write_bytes(grouped)
                     (fixture / "dylint.toml").write_text("[statement_spacing]\n")
 
@@ -255,7 +284,9 @@ def main():
                             + before.decode(),
                             encoding="utf-8",
                         )
-                        run(["cargo", "+1.99.1", "fmt", "--all"], fixture)  # baseline only
+                        run(
+                            ["cargo", "+1.99.1", "fmt", "--all"], fixture
+                        )  # baseline only
                         run(base + ["check", *arguments], fixture)
 
                     (fixture / "dylint.toml").write_text(

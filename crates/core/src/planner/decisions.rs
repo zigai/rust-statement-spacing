@@ -60,7 +60,6 @@ pub(super) fn put(
     }
 
     *slot = Some(decision);
-
     return true;
 }
 
@@ -87,7 +86,6 @@ pub(super) fn join(rule: Rule, message: &'static str) -> Decision {
 pub(super) fn optional_join(rule: Rule) -> Decision {
     let mut decision = join(rule, "remove this separator within a cohesive phase");
     decision.priority = 20;
-
     return decision;
 }
 

@@ -85,6 +85,7 @@ pub(crate) fn collect_edits(
     let mut findings = BTreeMap::<FindingKey, Value>::new();
     let mut edits = BTreeMap::<(String, usize, usize), Edit>::new();
     let mut errors = Vec::new();
+
     for line in lines.lines() {
         let Ok(event) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -172,6 +173,7 @@ pub(crate) fn collect_edits(
                 .unwrap_or("")
                 .to_owned(),
         };
+
         let finding = json!({
             "rule": rule,
             "message": key.message,
@@ -189,6 +191,7 @@ pub(crate) fn collect_edits(
                 previous["fixable"] = json!(previous["fixable"] == true && proposals.len() == 1);
             })
             .or_insert(finding);
+
         // Always validate every target's proposals, including duplicate
         // diagnostics, so deduplication cannot hide conflicting replacements.
         if proposals.len() != 1 {
@@ -238,6 +241,7 @@ pub(crate) fn collect_edits(
             .ok_or_else(|| return failure("invalid suggestion replacement"))?
             .as_bytes()
             .to_vec();
+
         if before
             .iter()
             .chain(&after)

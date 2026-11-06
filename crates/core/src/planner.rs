@@ -77,7 +77,6 @@ fn build_decisions(
         &mut decisions,
     );
     local::cap_blank_lines(global_rules, list, &mut decisions);
-
     return decisions;
 }
 
@@ -89,8 +88,8 @@ fn build_decisions(
 pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, String> {
     config.validate()?;
     let global_rules = config.enabled();
-
     let mut result = Plan::default();
+
     for list in &model.lists {
         if list.gaps.len() != list.units.len().saturating_sub(1) {
             return Err("invalid source model: gap/unit count mismatch".into());
@@ -168,6 +167,7 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
             let old = source
                 .get(range.as_range())
                 .ok_or("invalid block edge range")?;
+
             if old.matches('\n').count() <= 1 {
                 continue;
             }
@@ -194,6 +194,5 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
         .sort_by_key(|f| return (f.range.start, f.range.end, f.rule));
     // Validate the whole set, including insertions shared by nested source lists.
     validate_edits(source, &result.edits())?;
-
     return Ok(result);
 }

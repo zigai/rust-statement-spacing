@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 
 pub(super) fn cohesive(config: &Config, list: &UnitList) -> Vec<bool> {
     let mut compact = Vec::new();
+
     if config.grouping.expressions != Expressions::Related
         || !config.grouping.same_receiver
         || !config.control_flow.related_continuation
@@ -17,6 +18,7 @@ pub(super) fn cohesive(config: &Config, list: &UnitList) -> Vec<bool> {
     }
 
     let mut start = 0;
+
     while let Some(anchor) = list.units.get(start) {
         if anchor.kind != UnitKind::Expression || anchor.facts.receivers.is_empty() {
             start += 1;

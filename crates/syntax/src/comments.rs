@@ -45,7 +45,6 @@ pub(crate) fn classify_gap(source: &str, left: ByteRange, right: ByteRange) -> G
             let Some(suffix) = source.get(comment_line_start..end) else {
                 return protected(range);
             };
-
             let mut lines = suffix.split('\n').peekable();
             while let Some(line) = lines.next() {
                 if lines.peek().is_none() {

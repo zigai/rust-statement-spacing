@@ -49,6 +49,7 @@ pub(crate) fn outputs(facts: &Facts) -> BTreeSet<Place> {
 pub(crate) fn direct_producer(a: &Facts, b: &Facts, settings: &Grouping) -> bool {
     return a.known && b.known && intersects(&outputs(a), &b.reads, settings.self_fields);
 }
+
 pub(crate) fn merges_flows(
     a: &Facts,
     b: &Facts,
@@ -58,12 +59,15 @@ pub(crate) fn merges_flows(
     let mut flow = a.definitions.clone();
     flow.extend(a.reads.iter().cloned());
     flow.extend(a.writes.iter().cloned());
+
     let single = |read: &Place| return BTreeSet::from([read.clone()]);
+
     return b.reads.iter().any(|read| {
         return header_covered_by(earlier, &single(read), mode)
             && !header_covered_by(&flow, &single(read), mode);
     });
 }
+
 pub(crate) fn unique_feeder_before(units: &[Unit], edge: usize, mode: SelfFields) -> bool {
     let (Some(before), Some(after)) = (units.get(edge), units.get(edge + 1)) else {
         return false;
@@ -73,12 +77,15 @@ pub(crate) fn unique_feeder_before(units: &[Unit], edge: usize, mode: SelfFields
     } else {
         after.facts.reads.clone()
     };
+
     let Some(prefix) = units.get(..edge.saturating_add(1)) else {
         return false;
     };
+
     if !intersects(&before.facts.definitions, &inputs, mode) {
         return false;
     }
+
     let feeders = prefix
         .iter()
         .filter(|unit| return intersects(&unit.facts.definitions, &inputs, mode))
@@ -140,6 +147,7 @@ pub(crate) fn relationship(a: &Facts, b: &Facts, settings: &Grouping) -> Relatio
 
 pub(crate) fn control_inputs(facts: &Facts, mode: UseIn) -> BTreeSet<Place> {
     let mut inputs = facts.header_reads.clone();
+
     match mode {
         UseIn::Header => {}
         UseIn::HeaderOrFirstBodyStatement => inputs.extend(facts.first_body_reads.clone()),
@@ -203,7 +211,6 @@ mod tests {
     fn unique_feeder_must_be_immediately_before_the_consumer() {
         let direct = [unit(facts(&["input"], &[])), unit(facts(&[], &["input"]))];
         assert!(unique_feeder_before(&direct, 0, SelfFields::Distinct));
-
         let interrupted = [
             unit(facts(&["input"], &[])),
             unit(facts(&["unrelated"], &[])),

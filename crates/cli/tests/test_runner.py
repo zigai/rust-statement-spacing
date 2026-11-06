@@ -17,8 +17,14 @@ if sys.platform == "win32":
     import msvcrt
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_BINARY = ROOT / "target/debug" / (
-    "cargo-statement-spacing.exe" if sys.platform == "win32" else "cargo-statement-spacing"
+DEFAULT_BINARY = (
+    ROOT
+    / "target/debug"
+    / (
+        "cargo-statement-spacing.exe"
+        if sys.platform == "win32"
+        else "cargo-statement-spacing"
+    )
 )
 BINARY = Path(os.environ.get("STATEMENT_SPACING_BIN", DEFAULT_BINARY)).resolve()
 if sys.platform == "win32" and not BINARY.suffix:
@@ -82,7 +88,9 @@ class WorkspaceTest(unittest.TestCase):
         )
         self.start, self.end = SOURCE.index(b";") + 1, SOURCE.index(b"std::")
 
-    def invoke(self, command="fix", scenario="normal", extra=(), diagnostics=None, git_env=None):
+    def invoke(
+        self, command="fix", scenario="normal", extra=(), diagnostics=None, git_env=None
+    ):
         env = os.environ.copy()
         env.update(
             PYTHON=sys.executable,
@@ -139,7 +147,9 @@ class PreviewAndBaselineTests(WorkspaceTest):
         applied = subprocess.run(
             ["git", "-c", "core.autocrlf=false", "apply", "--no-index", "-"],
             input=report["diff"].encode("utf-8"),
-            cwd=self.root, capture_output=True, check=False,
+            cwd=self.root,
+            capture_output=True,
+            check=False,
         )
         self.assertEqual(
             applied.returncode, 0, applied.stderr.decode("utf-8", "replace")
@@ -171,16 +181,37 @@ class PreviewAndBaselineTests(WorkspaceTest):
         self.assertEqual(report["findings"], [])
         prefix = b"// unrelated addition\n"
         self.source.write_bytes(prefix + SOURCE)
-        items = [diagnostic("src/lib.rs", self.start + len(prefix), self.end + len(prefix), rule="statement_spacing_bindings")]
+        items = [
+            diagnostic(
+                "src/lib.rs",
+                self.start + len(prefix),
+                self.end + len(prefix),
+                rule="statement_spacing_bindings",
+            )
+        ]
         code, original_report = self.invoke("check")
         items[0]["message"]["message"] = original_report["findings"][0]["message"]
-        code, report = self.invoke("check", extra=("--baseline", str(baseline)), diagnostics="\n".join(map(json.dumps, items)))
+        code, report = self.invoke(
+            "check",
+            extra=("--baseline", str(baseline)),
+            diagnostics="\n".join(map(json.dumps, items)),
+        )
         self.assertEqual(code, 0, report)
         self.assertEqual(report["baseline_matched"], 1)
         self.source.write_bytes(prefix + SOURCE + SOURCE)
-        items.append(diagnostic("src/lib.rs", self.start + len(prefix) + len(SOURCE), self.end + len(prefix) + len(SOURCE)))
+        items.append(
+            diagnostic(
+                "src/lib.rs",
+                self.start + len(prefix) + len(SOURCE),
+                self.end + len(prefix) + len(SOURCE),
+            )
+        )
         items[1]["message"]["message"] = items[0]["message"]["message"]
-        code, report = self.invoke("check", extra=("--baseline", str(baseline)), diagnostics="\n".join(map(json.dumps, items)))
+        code, report = self.invoke(
+            "check",
+            extra=("--baseline", str(baseline)),
+            diagnostics="\n".join(map(json.dumps, items)),
+        )
         self.assertEqual(code, 1, report)
         self.assertEqual(len(report["findings"]), 1)
 
@@ -188,7 +219,9 @@ class PreviewAndBaselineTests(WorkspaceTest):
         baseline = self.root / "baseline.json"
         code, report = self.invoke("check", extra=("--write-baseline", str(baseline)))
         self.assertEqual(code, 0, report)
-        self.assert_rejected(command="check", extra=("--baseline", str(baseline), "--all-features"))
+        self.assert_rejected(
+            command="check", extra=("--baseline", str(baseline), "--all-features")
+        )
         data = json.loads(baseline.read_text())
         data["findings"] = {"0" * 64: -1}
         baseline.write_text(json.dumps(data))
@@ -198,8 +231,18 @@ class PreviewAndBaselineTests(WorkspaceTest):
         baseline = self.root / "baseline.json"
         baseline.write_text("preserve this baseline")
         process = subprocess.run(
-            [str(BINARY), "check", "--baseline", "baseline.json", "--report", str(baseline)],
-            cwd=self.root, capture_output=True, text=True, check=False,
+            [
+                str(BINARY),
+                "check",
+                "--baseline",
+                "baseline.json",
+                "--report",
+                str(baseline),
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         self.assertEqual(process.returncode, 2)
         self.assertIn("report and baseline paths must differ", process.stderr)
@@ -213,7 +256,9 @@ class PreviewAndBaselineTests(WorkspaceTest):
         library = self.root / "rules"
         output = library / "target/release"
         output.mkdir(parents=True)
-        (library / "Cargo.toml").write_text('[package]\nname="rules"\nversion="0.1.0"\n')
+        (library / "Cargo.toml").write_text(
+            '[package]\nname="rules"\nversion="0.1.0"\n'
+        )
         (output / "libstatement_spacing@old.so").write_bytes(b"stale")
         code, report = self.invoke("check", extra=("--library-path", str(library)))
         self.assertEqual(code, 1, report)
@@ -227,7 +272,10 @@ class PreviewAndBaselineTests(WorkspaceTest):
         library.write_bytes(b"explicit library")
         code, report = self.invoke(extra=("--library-path", str(library)))
         self.assertEqual(code, 0, report)
-        self.assertEqual(report["library_binary"]["sha256"], hashlib.sha256(library.read_bytes()).hexdigest())
+        self.assertEqual(
+            report["library_binary"]["sha256"],
+            hashlib.sha256(library.read_bytes()).hexdigest(),
+        )
         self.assertIn("--lib-path", json.dumps(report["commands"]))
 
 
@@ -243,7 +291,9 @@ class EditTests(WorkspaceTest):
                 code, report = self.invoke(command, diagnostics=lines)
                 self.assertEqual(code, expected_code, report)
                 self.assertEqual(len(report["findings"]), 1)
-                self.assertEqual(report["rule_counts"], {"statement_spacing_bindings": 1})
+                self.assertEqual(
+                    report["rule_counts"], {"statement_spacing_bindings": 1}
+                )
                 self.assertEqual(report["findings"][0]["byte_start"], self.start)
         self.assertEqual(self.source.read_bytes(), FIXED)
 
@@ -355,7 +405,9 @@ class EditTests(WorkspaceTest):
         (member / "Cargo.toml").write_text(
             '[package]\nname="member"\nversion="0.1.0"\n'
         )
-        item = diagnostic("member/src/lib.rs", self.start, self.end, package="member-id")
+        item = diagnostic(
+            "member/src/lib.rs", self.start, self.end, package="member-id"
+        )
         code, report = self.invoke(
             scenario="multi-package", diagnostics=json.dumps(item)
         )
@@ -378,7 +430,9 @@ class SnapshotTests(WorkspaceTest):
     def initialize_git(self, env):
         subprocess.run(
             ["git", "init", "--quiet", str(self.root)],
-            env=dict(os.environ, **env), capture_output=True, check=True,
+            env=dict(os.environ, **env),
+            capture_output=True,
+            check=True,
         )
 
     def test_global_excludes_skip_directory_links_and_invalid_manifests(self):
@@ -444,18 +498,33 @@ class SnapshotTests(WorkspaceTest):
             (self.root / ".gitignore").write_text("!root.txt\nroot-blocked.txt\n")
             (self.root / "nested").mkdir()
             (self.root / "nested/.gitignore").write_text("!child.txt\n")
-            for name in ("global.txt", "info.txt", "root.txt", "blocked.txt", "root-blocked.txt", "nested/child.txt"):
+            for name in (
+                "global.txt",
+                "info.txt",
+                "root.txt",
+                "blocked.txt",
+                "root-blocked.txt",
+                "nested/child.txt",
+            ):
                 (self.root / name).write_text(name)
             self.source.write_bytes(FIXED)
             included = [
-                "Cargo.toml", "Cargo.lock", "src/lib.rs", ".gitignore",
-                "nested/.gitignore", "info.txt", "root.txt", "nested/child.txt",
+                "Cargo.toml",
+                "Cargo.lock",
+                "src/lib.rs",
+                ".gitignore",
+                "nested/.gitignore",
+                "info.txt",
+                "root.txt",
+                "nested/child.txt",
             ]
             expected = {
                 name: hashlib.sha256((self.root / name).read_bytes()).hexdigest()
                 for name in included
             }
-            fingerprint = hashlib.sha256(json.dumps(expected, sort_keys=True).encode()).hexdigest()
+            fingerprint = hashlib.sha256(
+                json.dumps(expected, sort_keys=True).encode()
+            ).hexdigest()
             code, report = self.invoke(git_env=env)
             self.assertEqual(code, 0, report)
             self.assertEqual(report["source_fingerprint"], fingerprint)
@@ -482,7 +551,9 @@ class SnapshotTests(WorkspaceTest):
             code, report = self.invoke(git_env=env)
             self.assertEqual(code, 0, report)
             self.assertEqual(self.source.read_bytes(), FIXED)
-            (repository / "excludes").write_text("/workspace/global/\n/workspace/configured/\n")
+            (repository / "excludes").write_text(
+                "/workspace/global/\n/workspace/configured/\n"
+            )
             with (repository / ".git/config").open("a") as stream:
                 stream.write("\n[core]\nexcludesFile = excludes\n")
             (workspace / "configured").mkdir()

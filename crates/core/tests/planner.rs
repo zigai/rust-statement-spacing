@@ -31,6 +31,7 @@ fn model(kinds: &[UnitKind], semantics: &[Facts], blanks: &[usize]) -> (String, 
     let mut source = String::new();
     let mut units = Vec::new();
     let mut gaps = Vec::new();
+
     for (index, (&kind, facts)) in kinds.iter().zip(semantics).enumerate() {
         if index != 0 {
             let start = source.len();
@@ -105,7 +106,6 @@ fn consecutive_bindings_are_compact() -> Result<(), Box<dyn Error>> {
         &[0],
     );
     assert_eq!(count(&Config::default(), &source, &model)?, 0);
-
     return Ok(());
 }
 
@@ -124,7 +124,6 @@ fn unrelated_binding_to_expression_is_separated() -> Result<(), Box<dyn Error>> 
     assert_eq!(plan.findings.len(), 1);
     assert_eq!(plan.findings[0].rule, Rule::Bindings);
     assert_eq!(apply_edits(&source, &plan.edits())?, "unit0;\n\n    unit1;");
-
     return Ok(());
 }
 
@@ -140,7 +139,6 @@ fn immediate_producer_consumer_is_compact() -> Result<(), Box<dyn Error>> {
         &[0],
     );
     assert_eq!(count(&Config::default(), &source, &model)?, 0);
-
     return Ok(());
 }
 
@@ -156,7 +154,6 @@ fn existing_optional_blank_is_preserved() -> Result<(), Box<dyn Error>> {
         &[1],
     );
     assert_eq!(count(&Config::default(), &source, &model)?, 0);
-
     return Ok(());
 }
 
@@ -176,7 +173,6 @@ fn explicitly_enabled_join_removes_optional_blank() -> Result<(), Box<dyn Error>
     config.grouping.join_related = true;
     let plan = plan(&config, &source, &model)?;
     assert_eq!(apply_edits(&source, &plan.edits())?, "unit0;\n    unit1;");
-
     return Ok(());
 }
 
@@ -192,7 +188,6 @@ fn unknown_facts_do_not_mean_unrelated() -> Result<(), Box<dyn Error>> {
         &[0],
     );
     assert_eq!(count(&Config::default(), &source, &model)?, 0);
-
     return Ok(());
 }
 
@@ -213,9 +208,9 @@ fn self_field_input_chain_is_compact_unless_strictly_configured() -> Result<(), 
             ..Facts::default()
         };
     });
-
     let (source, model) = model(&[UnitKind::Expression; 3], &inputs, &[0, 0]);
     let config = Config::default();
+
     assert_eq!(count(&config, &source, &model)?, 0);
 
     let mut distinct = config.clone();
@@ -255,7 +250,6 @@ fn disabled_specific_rule_is_not_reintroduced_by_generic_rule() -> Result<(), Bo
     );
     model.lists[0].units[1].enabled = RuleMask::all().without(Rule::Bindings);
     assert_eq!(count(&Config::default(), &source, &model)?, 0);
-
     return Ok(());
 }
 
@@ -271,12 +265,13 @@ fn inactive_and_protected_units_are_barriers() -> Result<(), Box<dyn Error>> {
         &[0],
     );
     model.lists[0].units[0].active = false;
+
     assert_eq!(count(&Config::default(), &source, &model)?, 0);
 
     model.lists[0].units[0].active = true;
     model.lists[0].gaps[0].protected = true;
-    assert_eq!(count(&Config::default(), &source, &model)?, 0);
 
+    assert_eq!(count(&Config::default(), &source, &model)?, 0);
     return Ok(());
 }
 
@@ -293,8 +288,8 @@ fn control_attaches_one_related_setup() -> Result<(), Box<dyn Error>> {
         &[facts(&["items"], &[]), control],
         &[0],
     );
-    assert_eq!(count(&Config::default(), &source, &model)?, 0);
 
+    assert_eq!(count(&Config::default(), &source, &model)?, 0);
     return Ok(());
 }
 
@@ -324,7 +319,6 @@ fn related_suffix_is_split_once() -> Result<(), Box<dyn Error>> {
         apply_edits(&source, &plan.edits())?,
         "unit0;\n\n    unit1;\n    unit2;"
     );
-
     return Ok(());
 }
 
@@ -346,7 +340,6 @@ fn whole_group_overflow_separates_control() -> Result<(), Box<dyn Error>> {
         apply_edits(&source, &plan.edits())?,
         "unit0;\n    unit1;\n\n    unit2;"
     );
-
     return Ok(());
 }
 
@@ -451,7 +444,6 @@ fn explicit_related_suffix_bounds_a_direct_producer_chain() -> Result<(), Box<dy
     let (expected, fixed_model) = model(&kinds, &semantics, &[1, 0]);
     assert_eq!(apply_edits(&source, &first.edits())?, expected);
     assert!(plan(&config, &expected, &fixed_model)?.edits().is_empty());
-
     return Ok(());
 }
 
@@ -476,7 +468,6 @@ fn mandatory_result_pair_overrides_zero_setup_limit() -> Result<(), Box<dyn Erro
     assert_eq!(plan.findings.len(), 1);
     assert_eq!(plan.findings[0].rule, Rule::ResultCheck);
     assert_eq!(apply_edits(&source, &plan.edits())?, "unit0;\n    unit1;");
-
     return Ok(());
 }
 
@@ -495,8 +486,8 @@ fn result_pair_does_not_join_across_leading_comment() -> Result<(), Box<dyn Erro
         &[1],
     );
     model.lists[0].gaps[0].joinable = false;
-    assert_eq!(count(&Config::default(), &source, &model)?, 0);
 
+    assert_eq!(count(&Config::default(), &source, &model)?, 0);
     return Ok(());
 }
 
@@ -516,7 +507,6 @@ fn guard_chain_is_an_explicit_exception() -> Result<(), Box<dyn Error>> {
     }
 
     assert_eq!(count(&Config::default(), &source, &model)?, 0);
-
     return Ok(());
 }
 
@@ -535,7 +525,6 @@ fn standalone_block_is_separated() -> Result<(), Box<dyn Error>> {
         plan(&Config::default(), &source, &model)?.findings[0].rule,
         Rule::AfterBlock
     );
-
     return Ok(());
 }
 
@@ -552,7 +541,6 @@ fn short_tail_stays_compact() -> Result<(), Box<dyn Error>> {
     );
     model.lists[0].units[1].is_tail = true;
     assert_eq!(count(&Config::default(), &source, &model)?, 0);
-
     return Ok(());
 }
 
@@ -569,7 +557,6 @@ fn long_tail_after_immediate_producer_stays_compact() -> Result<(), Box<dyn Erro
     );
     model.lists[0].units[2].is_tail = true;
     assert_eq!(count(&Config::default(), &source, &model)?, 0);
-
     return Ok(());
 }
 
@@ -583,8 +570,8 @@ fn always_separate_tail_never_pads_a_sole_expression() -> Result<(), Box<dyn Err
     model.lists[0].units[0].is_tail = true;
     let mut c = Config::default();
     c.exits.tail = Tail::AlwaysSeparate;
-    assert_eq!(count(&c, &source, &model)?, 0);
 
+    assert_eq!(count(&c, &source, &model)?, 0);
     return Ok(());
 }
 
@@ -695,7 +682,6 @@ fn mandatory_check_pair_still_separates_unrelated_prefix() -> Result<(), Box<dyn
         apply_edits(&source, &plan.edits())?,
         "unit0;\n\n    unit1;\n    unit2;"
     );
-
     return Ok(());
 }
 
@@ -776,6 +762,7 @@ fn empty_drain_loop_attaches_only_to_known_mutation() -> Result<(), Box<dyn Erro
 
         for strict_expressions in [false, true] {
             let mut strict = config.clone();
+
             if strict_expressions {
                 strict.grouping.expressions = Expressions::Strict;
             } else {
@@ -808,8 +795,8 @@ fn receiver_centered_setup_can_attach_to_control() -> Result<(), Box<dyn Error>>
         &[setup, control],
         &[0],
     );
-    assert_eq!(count(&Config::default(), &source, &model)?, 0);
 
+    assert_eq!(count(&Config::default(), &source, &model)?, 0);
     return Ok(());
 }
 
@@ -827,8 +814,8 @@ fn compact_declaration_setting_does_not_override_function_preserve() -> Result<(
     let mut config = Config::default();
     config.items.functions = Separation::Preserve;
     config.items.compact_declarations = false;
-    assert_eq!(count(&config, &source, &model)?, 0);
 
+    assert_eq!(count(&config, &source, &model)?, 0);
     return Ok(());
 }
 
@@ -844,11 +831,12 @@ fn after_block_preserve_allows_adjacent_controls() -> Result<(), Box<dyn Error>>
         &[0],
     );
     let mut config = Config::default();
+
     assert_eq!(count(&config, &source, &model)?, 1);
 
     config.control_flow.after_block = Separation::Preserve;
-    assert_eq!(count(&config, &source, &model)?, 0);
 
+    assert_eq!(count(&config, &source, &model)?, 0);
     return Ok(());
 }
 
@@ -952,6 +940,7 @@ fn empty_drain_chain_and_bare_return_honor_cleanup_policy() -> Result<(), Box<dy
 
     for strict_expressions in [false, true] {
         let mut strict = Config::default();
+
         if strict_expressions {
             strict.grouping.expressions = Expressions::Strict;
         } else {
@@ -996,7 +985,6 @@ fn valueless_loop_exit_attaches_to_assignment_in_long_block() -> Result<(), Box<
         "unit0;\n\n    unit1;"
     );
     assert_eq!(separated.findings[0].rule, Rule::Exit);
-
     return Ok(());
 }
 
@@ -1041,6 +1029,7 @@ fn receiver_group_bridges_consumed_setup_only() -> Result<(), Box<dyn Error>> {
 
         for strict in [false, true] {
             let mut config = Config::default();
+
             if strict {
                 config.grouping.expressions = Expressions::Strict;
             } else {
@@ -1151,6 +1140,7 @@ fn plain_mutation_cleanup_honors_explicit_policy() -> Result<(), Box<dyn Error>>
         (true, true, Tail::AlwaysSeparate, true),
     ] {
         let mut operation = facts(&[], &["state"]);
+
         if mutates {
             operation.mutating_receivers = places(&["state"]);
         }
@@ -1177,9 +1167,11 @@ fn plain_mutation_cleanup_honors_explicit_policy() -> Result<(), Box<dyn Error>>
         (Tail::Visual, true, 0),
     ] {
         let mut operation = facts(&[], &["value"]);
+
         if mutated {
             operation.writes = places(&["value"]);
         }
+
         let (source, mut initial) = model(
             &[UnitKind::Expression, UnitKind::Exit],
             &[operation, facts(&[], &["value"])],
@@ -1291,6 +1283,7 @@ fn block_data_continuations_respect_identity_and_opt_outs() -> Result<(), Box<dy
             for related in [false, true] {
                 for enabled in [false, true] {
                     let mut block = facts(&[], &[]);
+
                     if header {
                         block.header_reads = places(&["state"]);
                     } else {
@@ -1327,6 +1320,7 @@ fn block_macro_data_continuations_respect_shared_inputs_and_outputs() -> Result<
         for related in [false, true] {
             for enabled in [false, true] {
                 let mut block = facts(&[], &[]);
+
                 if header {
                     block.header_reads = places(&["state"]);
                 } else {
@@ -1370,15 +1364,17 @@ fn guard_and_final_return_share_a_phase() -> Result<(), Box<dyn Error>> {
     );
     initial.lists[0].units[1].is_guard = true;
     let mut config = Config::only(&[Rule::Exit, Rule::AfterBlock]);
+
     assert_eq!(count(&config, &source, &initial)?, 0);
 
     config.exits.tail = Tail::AlwaysSeparate;
+
     assert_eq!(count(&config, &source, &initial)?, 1);
 
     config.exits.tail = Tail::Smart;
     config.control_flow.guard_chain = GuardChain::Separate;
-    assert_eq!(count(&config, &source, &initial)?, 1);
 
+    assert_eq!(count(&config, &source, &initial)?, 1);
     return Ok(());
 }
 
@@ -1574,12 +1570,15 @@ fn call_runs_require_enabled_resolved_identity() -> Result<(), Box<dyn Error>> {
         facts.direct_callees = BTreeSet::from([format!("DefId(0:1 ~ krate::helpers::{name}")]);
         return facts;
     };
+
     let mut config = Config::default();
     config.grouping.bindings = Bindings::Multiline;
     config.grouping.expressions = Expressions::Multiline;
     config.grouping.join_related = true;
+
     for same_callee in [false, true] {
         config.grouping.same_callee = same_callee;
+
         for (first, second, identical) in [
             ("emit", "emit", true),
             ("left::emit", "right::emit", false),
@@ -1591,10 +1590,12 @@ fn call_runs_require_enabled_resolved_identity() -> Result<(), Box<dyn Error>> {
                 &[reset(first), reset(second)],
                 &[0],
             );
+
             for unit in &mut initial.lists[0].units {
                 unit.shape.form = Form::Call;
                 unit.shape.role = StatementRole::FunctionCall;
             }
+
             assert_eq!(
                 count(&config, &source, &initial)?,
                 usize::from(!(same_callee && identical)),

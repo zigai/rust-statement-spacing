@@ -327,7 +327,6 @@ impl Config {
     /// Creates a configuration with only the specified rules enabled.
     pub fn only(rules: &[Rule]) -> Self {
         let default_rules = RuleMask::all().without(Rule::Layout);
-
         let mut enable = Vec::new();
         let mut disable = Vec::new();
         for rule in Rule::ALL {

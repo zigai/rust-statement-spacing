@@ -10,7 +10,6 @@ fn raw_string_contents_are_unchanged() -> Result<(), Box<dyn Error>> {
     let source = "fn f() {\n    let text = r###\"one\n\n\n// not a comment\n}\"###;\n    use_text(text);\n}\n";
     let (fixed, _) = structural(source, &strict())?;
     assert!(fixed.contains("r###\"one\n\n\n// not a comment\n}\"###"));
-
     return Ok(());
 }
 
@@ -55,6 +54,5 @@ fn fingerprint_preserves_ordered_kind_names_and_token_bytes() -> Result<(), Box<
         fingerprint,
         token_fingerprint("m! ( r#\"a  b\"# ) ;\n// keep\n", "2024")?
     );
-
     return Ok(());
 }

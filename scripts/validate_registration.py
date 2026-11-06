@@ -98,9 +98,7 @@ def main():
             if not libraries:
                 libraries = [
                     path
-                    for path in target.glob(
-                        "release/*statement_spacing@*"
-                    )
+                    for path in target.glob("release/*statement_spacing@*")
                     if path.suffix in (".so", ".dylib", ".dll") and path.is_file()
                 ]
             if len(libraries) != 1:

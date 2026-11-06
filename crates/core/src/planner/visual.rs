@@ -31,6 +31,7 @@ pub(super) fn assertion_boundary(config: &Config, list: &UnitList, index: usize)
                 &b.facts.reads,
                 config.grouping.self_fields,
             );
+
         let scenario_check = mutation_check(config, a, b)
             || (call_check(config, a, b)
                 && list
@@ -45,10 +46,10 @@ pub(super) fn assertion_boundary(config: &Config, list: &UnitList, index: usize)
                     })
                     .count()
                     > 1);
-
         let reexamination = a.kind == UnitKind::Expression
             && header_covered_by(&a.facts.reads, &b.facts.reads, config.grouping.self_fields)
             && !header_covered_by(&b.facts.reads, &a.facts.reads, config.grouping.self_fields);
+
         return Some(
             count > config.exits.short_block_max_statements
                 && (!operation_check || b.shape.pins_value)
@@ -189,6 +190,7 @@ pub(super) fn compact_tail(
     if a.kind == UnitKind::Control && matches!(a.shape.form, Form::Conditional | Form::CallCheck) {
         return guard_continuation(a, b);
     }
+
     if b.kind == UnitKind::Exit
         && a.kind == UnitKind::Control
         && a.shape.form == Form::Loop
@@ -205,6 +207,7 @@ pub(super) fn compact_tail(
     {
         return true;
     }
+
     if (list.scope == Scope::Closure && list.executable_count == 2 && a.kind == UnitKind::Control)
         || (b.is_tail
             && b.kind == UnitKind::Expression
@@ -217,9 +220,11 @@ pub(super) fn compact_tail(
     {
         return true;
     }
+
     if b.kind != UnitKind::Exit && !b.is_tail {
         return false;
     }
+
     let b_text = source.get(b.code_range.as_range()).unwrap_or("");
     let b_single = !b_text.contains('\n');
     let a_text = source.get(a.code_range.as_range()).unwrap_or("");
@@ -228,9 +233,11 @@ pub(super) fn compact_tail(
         &b.facts.reads,
         config.grouping.self_fields,
     );
+
     if b.kind == UnitKind::Exit && b_single && producer {
         return true;
     }
+
     if b.kind == UnitKind::Exit
         && a.kind == UnitKind::Let
         && !a_text.contains('\n')
@@ -240,6 +247,7 @@ pub(super) fn compact_tail(
     {
         return true;
     }
+
     if b.kind == UnitKind::Exit
         && b_single
         && b.facts.reads.is_empty()
@@ -248,6 +256,7 @@ pub(super) fn compact_tail(
     {
         return true;
     }
+
     if b.kind == UnitKind::Exit
         && b_single
         && !a.kind.ends_block()
@@ -257,6 +266,7 @@ pub(super) fn compact_tail(
     {
         return true;
     }
+
     if b.kind == UnitKind::Exit
         && !b_single
         && list.executable_count <= config.exits.short_block_max_statements
@@ -299,11 +309,13 @@ pub(super) fn is_validation_adapter(callee: &str) -> bool {
             | "into_report"
     );
 }
+
 fn has_macro_bang(text: &str) -> bool {
     return text.replace("!=", "").contains("!(")
         || text.replace("!=", "").contains("![")
         || text.replace("!=", "").contains("!{");
 }
+
 pub(super) fn bool_flag_run(source: &str, a: &Unit, b: &Unit) -> bool {
     fn first_line_has_bool_op(text: &str) -> bool {
         return text.lines().next().is_some_and(|first| {
@@ -314,12 +326,14 @@ pub(super) fn bool_flag_run(source: &str, a: &Unit, b: &Unit) -> bool {
                 || first.contains("<=");
         });
     }
+
     fn plain_step(form: Form) -> bool {
         return matches!(
             form,
             Form::Other | Form::Value | Form::Call | Form::Method | Form::Literal
         );
     }
+
     return b.kind == UnitKind::Let
         && plain_step(b.shape.form)
         && a.kind.ordinary()
@@ -406,8 +420,10 @@ pub(super) fn related_join(config: &Config, source: &str, a: &Unit, b: &Unit) ->
                 && source
                     .get(b.code_range.as_range())
                     .is_some_and(|text| return !text.contains('\n'));
+
             let same_inputs = !b.facts.reads.is_empty()
                 && header_covered_by(&a.facts.reads, &b.facts.reads, config.grouping.self_fields);
+
             let input_roots = |unit: &Unit| {
                 return unit
                     .facts
@@ -423,6 +439,7 @@ pub(super) fn related_join(config: &Config, source: &str, a: &Unit, b: &Unit) ->
                     return !is_validation_adapter(callee)
                         && b.facts.direct_callees.contains(callee);
                 });
+
             (short_pair || same_inputs || root_shared)
                 && (a.kind == UnitKind::Expression || a.kind.is_binding())
                 && (b.kind == UnitKind::Expression || b.kind.is_binding())
@@ -476,6 +493,7 @@ pub(super) fn boundary(
             &b.facts.receivers,
             config.grouping.self_fields,
         ));
+
     fn arms_do_work(text: &str) -> bool {
         let Some((_, arms)) = text.split_once('{') else {
             return false;
@@ -483,30 +501,39 @@ pub(super) fn boundary(
         if has_macro_bang(arms) {
             return true;
         }
+
         fn is_ident(mark: Option<&u8>) -> bool {
             return mark.is_some_and(|byte| return byte.is_ascii_alphanumeric() || *byte == b'_');
         }
+
         let bytes = arms.as_bytes();
         let mut i = 0;
+
         while i < bytes.len() {
             if !is_ident(bytes.get(i)) {
                 i += 1;
                 continue;
             }
+
             let start = i;
+
             while is_ident(bytes.get(i)) {
                 i += 1;
             }
+
             let Some(token) = arms.get(start..i) else {
                 continue;
             };
             let Some(first) = token.chars().next() else {
                 continue;
             };
+
             let bounded = start == 0 || !is_ident(bytes.get(start - 1));
+
             if !bounded || (!first.is_lowercase() && first != '_') {
                 continue;
             }
+
             let mut end = i;
             while bytes
                 .get(end)
@@ -522,6 +549,7 @@ pub(super) fn boundary(
         }
         return false;
     }
+
     let dispatch_run = b.kind == UnitKind::Let
         && matches!(b.shape.form, Form::Conditional | Form::Branch)
         && a.kind == UnitKind::Let
@@ -532,6 +560,7 @@ pub(super) fn boundary(
             &b.facts.header_reads,
             config.grouping.self_fields,
         ) || !arms_do_work(text(b)));
+
     if a.kind.is_binding()
         && multiline
         && ((matches!(a.shape.form, Form::Conditional | Form::Branch)
@@ -605,10 +634,13 @@ pub(super) fn boundary(
     {
         return None;
     }
+
     if sandwiched(config, list, index) || sandwiched(config, list, index + 1) {
         return None;
     }
+
     let b_lines = text(b).lines().count();
+
     fn outermost_default(text: &str) -> bool {
         let mut position: Option<usize> = None;
         for marker in ["unwrap_or(", "unwrap_or_default(", "unwrap_or_else("] {
@@ -617,12 +649,14 @@ pub(super) fn boundary(
                 position = Some(position.map_or(end, |best| return best.max(end)));
             }
         }
+
         let Some(at) = position else {
             return false;
         };
         let Some(mut rest) = text.get(at..).map(|tail| return tail.trim_start()) else {
             return false;
         };
+
         let mut depth = 0_usize;
         for (index, mark) in rest.char_indices() {
             if mark == '(' {
@@ -636,11 +670,13 @@ pub(super) fn boundary(
                     rest = rest.strip_prefix('?').unwrap_or(rest).trim_start();
                     return rest.is_empty() || rest == ";";
                 }
+
                 depth = depth.saturating_sub(1);
             }
         }
         return false;
     }
+
     let produced_use = b.kind.is_binding()
         && (!matches!(a.shape.form, Form::Branch | Form::Conditional | Form::Loop)
             || (a.shape.form == Form::Branch && b.shape.form == Form::Method && b_lines > 1))
@@ -660,6 +696,7 @@ pub(super) fn boundary(
             &b.facts.mutating_receivers,
             config.grouping.self_fields,
         ));
+
     let dispatch_refinement = b.kind == UnitKind::Let
         && matches!(b.shape.form, Form::Conditional | Form::Branch)
         && !matches!(a.shape.form, Form::Branch | Form::Conditional | Form::Loop)
@@ -670,6 +707,7 @@ pub(super) fn boundary(
             &b.facts.reads,
             config.grouping.self_fields,
         );
+
     let bool_run = bool_flag_run(source, a, b);
     let parallel_run = config.grouping.same_callee
         && b.kind == UnitKind::Let
@@ -688,6 +726,7 @@ pub(super) fn boundary(
             &b.facts.receivers,
             config.grouping.self_fields,
         );
+
     if multiline
         && !produced_use
         && !dispatch_refinement
@@ -697,6 +736,7 @@ pub(super) fn boundary(
     {
         return Some("separate a new phase after this multiline production");
     }
+
     if list.scope == Scope::Loop
         && b.is_guard
         && (list.executable_count <= 4
@@ -729,6 +769,7 @@ pub(super) fn boundary(
     if producer && a.facts.definitions.len() > 1 && b.kind.is_binding() && !text(b).contains('\n') {
         return None;
     }
+
     if multiline
         && !produced_use
         && !dispatch_refinement
@@ -738,6 +779,7 @@ pub(super) fn boundary(
     {
         return Some("separate a new phase after this multiline production");
     }
+
     if a.kind == UnitKind::Let
         && b.kind == UnitKind::Control
         && !b.shape.exiting_guard
@@ -799,6 +841,7 @@ pub(super) fn boundary(
         {
             return None;
         }
+
         if producer {
             return None;
         }

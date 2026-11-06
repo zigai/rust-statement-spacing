@@ -12,6 +12,7 @@ use rust_statement_spacing_core::{
     ByteRange, Facts, ItemKind, Rule, RuleMask, Shape, SourceModel, StatementRole, Unit, UnitKind,
     UnitList,
 };
+
 fn make_unit(
     node: &SyntaxNode,
     semantics: Option<&SemanticIndex>,
@@ -126,20 +127,24 @@ fn make_unit(
 
 fn leading_inner_docs(source: &str, first: &Unit) -> Option<ByteRange> {
     let prefix = source.get(..first.range.start)?;
+
     let mut start = None;
     let mut end = None;
     let mut offset = 0;
+
     for line in prefix.split_inclusive('\n') {
         let trimmed = line.trim_start();
         if trimmed.starts_with("//!") {
             if start.is_none() {
                 start = Some(offset + (line.len() - trimmed.len()));
             }
+
             end = Some(offset + line.trim_end().len());
         } else if !(trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#')) {
             start = None;
             end = None;
         }
+
         offset += line.len();
     }
     return start.and_then(|start| return end.map(|end| return ByteRange::new(start, end)));
@@ -161,6 +166,7 @@ pub(crate) fn lower(
                 | SyntaxKind::ASSOC_ITEM_LIST
                 | SyntaxKind::EXTERN_ITEM_LIST
         );
+
         if (k != SyntaxKind::STMT_LIST && !item_list) || inside_token_tree(&container) {
             continue;
         }
@@ -229,6 +235,7 @@ pub(crate) fn lower(
                 },
             );
         }
+
         let gaps = units
             .windows(2)
             .filter_map(|pair| {

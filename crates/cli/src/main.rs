@@ -233,7 +233,6 @@ fn execute(options: Options) -> ExitCode {
             exit_code
         }
     };
-
     return ExitCode::from(report::emit(
         &driver.options,
         &driver.report,

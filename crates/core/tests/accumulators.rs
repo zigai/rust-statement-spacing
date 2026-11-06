@@ -38,6 +38,7 @@ fn rendered(
     let mut source = String::new();
     let mut units = Vec::new();
     let mut gaps = Vec::new();
+
     for (index, facts) in setup.iter().chain(once(control)).enumerate() {
         if index != 0 {
             let start = source.len();
@@ -186,7 +187,6 @@ fn late_reads_and_other_bindings_do_not_prove_accumulation() -> Result<(), Box<d
         )?,
         "setup;\n\n    control;"
     );
-
     return Ok(());
 }
 
@@ -218,11 +218,11 @@ fn accumulator_respects_explicit_scope_and_zero_limit() -> Result<(), Box<dyn Er
         whole_body_reads: places(&["state"]),
         ..Facts::default()
     };
+
     assert_eq!(
         rendered(&whole_body, &[initialized("state")], &read_only, 0)?,
         "setup;\n    control;"
     );
-
     return Ok(());
 }
 
@@ -298,6 +298,7 @@ fn opaque_body_preserves_proven_population_without_inventing_relationships()
 -> Result<(), Box<dyn Error>> {
     let mut config = Config::default();
     config.grouping.join_related = true;
+
     assert_eq!(
         rendered(&config, &[initialized("state")], &updates("state"), 1)?,
         "setup;\n    control;"
@@ -308,6 +309,7 @@ fn opaque_body_preserves_proven_population_without_inventing_relationships()
         mutating_receivers: places(&["state"]),
         ..Facts::default()
     };
+
     assert_eq!(
         rendered(&config, &[initialized("state")], &population, 1)?,
         "setup;\n    control;"
@@ -347,6 +349,7 @@ fn opaque_body_preserves_proven_population_without_inventing_relationships()
         config.grouping.use_in = use_in;
         config.grouping.max_before_control = limit;
         config.grouping.join_related = join_related;
+
         assert_eq!(
             rendered(&config, &[initialized("state")], &population, 1)?,
             "setup;\n\n    control;"

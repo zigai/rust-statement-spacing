@@ -205,6 +205,7 @@ fn journal_text<'entry>(entry: &'entry Value, key: &str) -> Result<&'entry str> 
 
 fn read_journal(directory: &Path) -> Result<Value> {
     let path = directory.join("journal.json");
+
     if directory.is_symlink() || path.is_symlink() {
         return Err(failure("refusing a symlinked recovery journal"));
     }
@@ -225,6 +226,7 @@ fn rollback(root: &Path, journal_dir: &Path) -> Result<Vec<String>> {
         .ok_or_else(|| return failure("unsupported or malformed recovery journal"))?;
 
     let mut conflicts = Vec::new();
+
     for entry in entries {
         let name = journal_text(entry, "path")?;
         let relative = safe_relative(name)?;
@@ -259,6 +261,7 @@ fn rollback(root: &Path, journal_dir: &Path) -> Result<Vec<String>> {
         } else {
             None
         };
+
         if current.as_deref() == Some(before) {
             continue;
         }
@@ -300,6 +303,7 @@ pub(crate) fn recover(root: &Path) -> Result<Vec<String>> {
     directories.sort();
 
     let mut restored = Vec::new();
+
     for directory in directories {
         if directory.is_symlink() || !directory.is_dir() {
             return Err(failure(format!(
@@ -319,8 +323,8 @@ pub(crate) fn recover(root: &Path) -> Result<Vec<String>> {
         let journal = read_journal(&directory)?;
         if journal.get("phase").and_then(Value::as_str) == Some("complete") {
             fs::remove_dir_all(&directory)?;
-            fsync_dir(&transactions)?;
 
+            fsync_dir(&transactions)?;
             continue;
         }
 
@@ -355,6 +359,7 @@ pub(crate) fn commit(
     gitignores: &GitIgnoreStack,
 ) -> Result<()> {
     check_interrupted()?;
+
     assert_snapshot(root, original, limit, exclusions, gitignores)?;
     for name in changed.keys() {
         if !original.contains_key(name) || !name.ends_with(".rs") {
@@ -400,6 +405,7 @@ pub(crate) fn commit(
     let preparation = (|| -> Result<Value> {
         for (index, (name, data)) in changed.iter().enumerate() {
             check_interrupted()?;
+
             let source = root.join(name);
             assert_no_symlink(root, &source)?;
             let before = read_regular(&source)?;
@@ -418,6 +424,7 @@ pub(crate) fn commit(
 
         let journal = json!({"schema": 1, "phase": "prepared", "files": entries});
         atomic_json(&journal_dir.join("journal.json"), &journal)?;
+
         fsync_dir(&transactions)?;
         fsync_dir(
             transactions
@@ -432,6 +439,7 @@ pub(crate) fn commit(
         Ok(journal) => journal,
         Err(error) => {
             fs::remove_dir_all(&journal_dir)?;
+
             fsync_dir(&transactions)?;
 
             return Err(error);
@@ -470,6 +478,7 @@ pub(crate) fn commit(
         }
 
         assert_snapshot(root, &expected, limit, exclusions, gitignores)?;
+
         check_interrupted()?;
 
         if let Some(map) = journal.as_object_mut() {

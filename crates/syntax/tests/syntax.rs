@@ -10,9 +10,9 @@ fn structural(source: &str, config: &Config) -> Result<(String, Plan), String> {
     let mut parsed = parse_source(source, "2024", None)?;
     let anchors = SemanticIndex::structural_anchors(parsed.code_ranges());
     parsed.attach(source, &anchors);
-
     let result = plan(config, source, &parsed.model)?;
     let fixed = apply_edits(source, &result.edits())?;
+
     if token_fingerprint(source, "2024")? != token_fingerprint(&fixed, "2024")? {
         return Err("token fingerprint mismatch after edits".into());
     }
@@ -22,7 +22,6 @@ fn structural(source: &str, config: &Config) -> Result<(String, Plan), String> {
 fn strict() -> Config {
     let mut config = Config::default();
     config.grouping.expressions = Expressions::Strict;
-
     return config;
 }
 

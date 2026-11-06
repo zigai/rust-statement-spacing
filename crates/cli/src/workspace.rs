@@ -57,6 +57,7 @@ impl GitIgnore {
                 },
                 |rest| return (true, rest),
             );
+
             if pattern.is_empty() {
                 continue;
             }
@@ -64,6 +65,7 @@ impl GitIgnore {
             let (must_be_dir, pattern) = pattern
                 .strip_suffix('/')
                 .map_or((false, pattern), |rest| return (true, rest));
+
             if pattern.is_empty() {
                 continue;
             }
@@ -94,6 +96,7 @@ impl GitIgnore {
             .and_then(|name| return name.to_str());
 
         let mut matched = None;
+
         for rule in &self.rules {
             if rule.must_be_dir && !is_dir {
                 continue;
@@ -129,6 +132,7 @@ impl GitIgnoreStack {
             .args(["config", "--null", "--path", "--get", "core.excludesFile"])
             .current_dir(root)
             .output()?;
+
         let global = match configured.status.code() {
             Some(0) => Some(PathBuf::from(
                 str::from_utf8(&configured.stdout)?.trim_end_matches('\0'),
@@ -148,6 +152,7 @@ impl GitIgnoreStack {
                 )));
             }
         };
+
         let metadata = Command::new("git")
             .args([
                 "rev-parse",
@@ -185,11 +190,13 @@ impl GitIgnoreStack {
         if let Some(path) = global.filter(|path| return !path.as_os_str().is_empty()) {
             stack.push_file(PathBuf::new(), &repository.join(path))?;
         }
+
         if let Some(path) = exclude {
             stack.push_file(PathBuf::new(), &path)?;
         }
 
         let mut directory = repository.clone();
+
         for component in stack.prefix.clone().components() {
             stack.push_file(
                 directory.strip_prefix(&repository)?.to_path_buf(),
@@ -229,6 +236,7 @@ impl GitIgnoreStack {
     pub(crate) fn is_ignored(&self, relative: &Path, is_dir: bool) -> bool {
         let mut ignored = false;
         let relative = self.prefix.join(relative);
+
         for gitignore in &self.ignores {
             if let Some(state) = gitignore.matches(&relative, is_dir) {
                 ignored = state;
@@ -246,6 +254,7 @@ impl GitIgnoreStack {
             current.push(component);
 
             let is_dir = i + 1 < components.len();
+
             if self.is_ignored(&current, is_dir) {
                 return true;
             }
@@ -380,7 +389,6 @@ pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>> {
 
     let mut data = Vec::new();
     io::copy(&mut file, &mut data)?;
-
     return Ok(data);
 }
 
@@ -412,9 +420,9 @@ fn file_link(
     gitignores: &GitIgnoreStack,
 ) -> Result<PathBuf> {
     let original = fs::read_link(path)?;
-
     let mut link = original.clone();
     let mut current = path.to_path_buf();
+
     for _ in 0..40 {
         let parent = current
             .parent()
@@ -514,6 +522,7 @@ pub(crate) fn scan(
 
             let info = fs::symlink_metadata(&path)?;
             let is_dir = info.is_dir();
+
             if gitignores.is_ignored(relative, is_dir) {
                 continue;
             }
@@ -556,6 +565,7 @@ pub(crate) fn scan(
                 Some(target) => target.as_os_str().as_encoded_bytes().to_vec(),
                 None => read_regular(&path)?,
             };
+
             if link.is_none() && data.len() as u64 != info.len() {
                 return Err(failure(format!(
                     "file changed during snapshot: {}",
@@ -591,6 +601,7 @@ pub(crate) fn assert_snapshot(
     sources: &GitIgnoreStack,
 ) -> Result<()> {
     let actual = scan(root, limit, exclusions, sources)?;
+
     if actual == *expected {
         return Ok(());
     }
@@ -652,6 +663,7 @@ pub(crate) fn copy_snapshot(
 
             read_regular(&source)?
         };
+
         if digest(&data) != state.digest {
             return Err(failure(format!("source changed while copying: {name}")));
         }
@@ -687,6 +699,7 @@ pub(crate) fn reject_ancestor_config(root: &Path) -> Result<()> {
             return env::var_os("HOME").map(|home| return PathBuf::from(home).join(".cargo"));
         })
         .and_then(|path| return fs::canonicalize(path).ok());
+
     for parent in root.ancestors().skip(1) {
         for name in [
             "rustfmt.toml",
@@ -698,6 +711,7 @@ pub(crate) fn reject_ancestor_config(root: &Path) -> Result<()> {
             let in_cargo_home = name.starts_with(".cargo/")
                 && cargo_home.is_some()
                 && fs::canonicalize(parent.join(".cargo")).ok() == cargo_home;
+
             if candidate.exists() && !in_cargo_home {
                 return Err(failure(format!(
                     "inherited configuration outside workspace is not relocatable: {}. Put this configuration in the workspace before using verified mode.",
@@ -725,6 +739,7 @@ pub(crate) fn validate_metadata(root: &Path, metadata: &Value) -> Result<()> {
     };
 
     let root = canonical(root)?;
+
     if canonical(Path::new(&text(&metadata["workspace_root"])?))? != root {
         return Err(failure(
             "Cargo resolved a different workspace in the verification replica",
@@ -739,11 +754,13 @@ pub(crate) fn validate_metadata(root: &Path, metadata: &Value) -> Result<()> {
         .ok_or_else(|| return failure("malformed Cargo metadata"))?;
 
     let mut found = false;
+
     for package in packages
         .iter()
         .filter(|package| return members.contains(&package["id"]))
     {
         found = true;
+
         relative_path(&root, Path::new(&text(&package["manifest_path"])?))?;
         for target in package["targets"]
             .as_array()
@@ -874,8 +891,11 @@ mod tests {
         let temporary = tempfile::tempdir().expect("create workspace fixture");
         let root = temporary.path().join("workspace");
         let outside = temporary.path().join("outside.rs");
+
         fs::create_dir_all(&root).expect("create workspace directory");
+
         fs::write(&outside, "fn main() {}\n").expect("write outside source");
+
         let root = canonical(&root).expect("canonical workspace root");
         let outside = canonical(&outside).expect("canonical outside path");
 
@@ -909,12 +929,14 @@ mod tests {
         let temporary = tempfile::tempdir()?;
         let root = temporary.path().join("source");
         let replica = temporary.path().join("replica");
+
         fs::create_dir_all(root.join("vendor"))?;
         fs::write(root.join("vendor/AGENTS.md"), "instructions")?;
         fs::write(root.join("vendor/OTHER.md"), "instructions")?;
         symlink("AGENTS.md", root.join("vendor/CLAUDE.md"))?;
         symlink("CLAUDE.md", root.join("vendor/CHAIN.md"))?;
         symlink("missing", root.join("vendor/DANGLING.md"))?;
+
         let sources = GitIgnoreStack::default();
         let original = scan(&root, 1024, &[], &sources)?;
         copy_snapshot(&root, &replica, &original, &[], &sources)?;
@@ -941,7 +963,6 @@ mod tests {
         fs::remove_file(root.join("vendor/CLAUDE.md"))?;
         symlink("OTHER.md", root.join("vendor/CLAUDE.md"))?;
         assert!(assert_snapshot(&root, &original, 1024, &[], &sources).is_err());
-
         return Ok(());
     }
 
@@ -954,6 +975,7 @@ mod tests {
         let temporary = tempfile::tempdir()?;
         let root = temporary.path().join("source");
         fs::create_dir_all(root.join("target"))?;
+
         fs::write(temporary.path().join("external"), "outside")?;
         fs::write(root.join("target/generated"), "excluded")?;
         fs::write(root.join("regular"), "inside")?;
@@ -971,9 +993,9 @@ mod tests {
 
         symlink("../external", root.join("indirect"))?;
         symlink("indirect", root.join("link"))?;
+
         let gitignores = GitIgnoreStack::default();
         assert!(file_link(&root, &root.join("link"), &[], &gitignores).is_err());
-
         return Ok(());
     }
 
@@ -988,10 +1010,12 @@ mod tests {
         let temporary = tempfile::tempdir()?;
         let root = temporary.path().join("source");
         let replica = temporary.path().join("replica");
+
         fs::create_dir_all(root.join("results"))?;
         fs::create_dir_all(root.join("results-kept"))?;
         mkfifoat(CWD, root.join("results/live.fifo"), Mode::RUSR | Mode::WUSR)?;
         fs::write(root.join("results-kept/source.rs"), "fn main() {}")?;
+
         let exclusions = vec![safe_relative("results")?];
 
         let sources = GitIgnoreStack::default();
@@ -1009,7 +1033,6 @@ mod tests {
         assert_snapshot(&root, &original, 1024, &exclusions, &sources)?;
         symlink("results/new-output", root.join("bypass"))?;
         assert!(scan(&root, 1024, &exclusions, &sources).is_err());
-
         return Ok(());
     }
 
@@ -1024,6 +1047,7 @@ mod tests {
         let temporary = tempfile::tempdir()?;
         let root = temporary.path().join("source");
         let replica = temporary.path().join("replica");
+
         fs::create_dir_all(root.join("benchmarks/results"))?;
         fs::create_dir_all(root.join("packages/typescript/node_modules"))?;
         fs::create_dir_all(root.join("src"))?;
@@ -1042,7 +1066,6 @@ mod tests {
             root.join("packages/typescript/node_modules/package.json"),
             "{}",
         )?;
-
         fs::write(root.join("src/lib.rs"), "pub fn run() {}")?;
         fs::write(root.join("file.ignored"), "not tracked")?;
         fs::write(root.join(".env.example"), "PUBLIC_KEY=123")?;
@@ -1071,7 +1094,6 @@ mod tests {
             fs::read_to_string(replica.join(".env.example"))?,
             "PUBLIC_KEY=123"
         );
-
         return Ok(());
     }
 }

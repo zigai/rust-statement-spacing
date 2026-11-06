@@ -23,6 +23,7 @@ impl SourceText {
         let mut map = Vec::with_capacity(bytes.len() + 1);
         let mut saw_crlf = false;
         let mut saw_lf = false;
+
         while i < bytes.len() {
             map.push(i);
 

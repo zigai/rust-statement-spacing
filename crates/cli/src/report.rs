@@ -37,7 +37,6 @@ pub(crate) fn emit(options: &Options, report: &Value, toolchain: Option<&str>, m
                     io::stderr(),
                     "could not serialize report: {error}"
                 ));
-
                 return 2;
             }
         }

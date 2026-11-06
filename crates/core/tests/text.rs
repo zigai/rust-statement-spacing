@@ -6,6 +6,7 @@ use rust_statement_spacing_core::text::SourceText;
 fn normalization_maps_bom_unicode_and_crlf() {
     let raw = "\u{feff}Ž\r\nx\r\n".to_string();
     let text = SourceText::new(raw);
+
     assert_eq!(text.normalized, "Ž\nx\n");
     assert!(text.crlf);
     assert!(!text.mixed_newlines);

@@ -3,7 +3,6 @@ use rust_statement_spacing_core::{ByteRange, ItemKind, UnitKind};
 
 pub(crate) fn range(node: &SyntaxNode) -> ByteRange {
     let range = node.text_range();
-
     return ByteRange::new(
         u32::from(range.start()) as usize,
         u32::from(range.end()) as usize,
@@ -18,7 +17,6 @@ pub(crate) fn code_range(node: &SyntaxNode) -> ByteRange {
         && let Some(expression) = statement.expr()
     {
         result.start = code_range(expression.syntax()).start;
-
         return result;
     }
 
@@ -175,7 +173,6 @@ pub(crate) fn control_body_start(expression: &SyntaxNode) -> Option<usize> {
             .find(|node| return node.kind() == SyntaxKind::MATCH_ARM_LIST),
         _ => None,
     };
-
     return body.map(|body| return range(&body).start);
 }
 
@@ -187,7 +184,6 @@ fn direct_operation_range(unit: &SyntaxNode) -> ByteRange {
     } else {
         control_body_start(&expression).unwrap_or_else(|| return range(unit).end)
     };
-
     return ByteRange::new(code_range(unit).start, end);
 }
 
