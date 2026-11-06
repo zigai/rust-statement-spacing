@@ -80,6 +80,49 @@ fn build_decisions(
     return decisions;
 }
 
+fn with_decisions(list: &UnitList, decisions: &[Option<Decision>]) -> UnitList {
+    let mut fixed = list.clone();
+    for (gap, decision) in fixed.gaps.iter_mut().zip(decisions) {
+        if let Some(decision) = decision {
+            gap.blank_lines = decision.blanks;
+        }
+    }
+    return fixed;
+}
+
+// Rules read the blank lines they see, so a separator planned by one rule can
+// change the groups another rule detects. Replan on the planned gap model until
+// the policy is stable on it, independently of offsets; a model that never
+// settles is an internal error. The source-adapter tests also reparse edits.
+fn settled_decisions(
+    config: &Config,
+    source: &str,
+    global_rules: RuleMask,
+    list: &UnitList,
+) -> Result<Vec<Option<Decision>>, String> {
+    let mut decisions = build_decisions(config, source, global_rules, list);
+    for _ in 0..=list.gaps.len() {
+        let fixed = with_decisions(list, &decisions);
+        let next = build_decisions(config, source, global_rules, &fixed);
+
+        let mut stable = true;
+        for ((slot, decision), gap) in decisions.iter_mut().zip(next).zip(&fixed.gaps) {
+            if let Some(decision) = decision
+                && decision.blanks != gap.blank_lines
+            {
+                stable = false;
+                *slot = Some(decision);
+            }
+        }
+
+        if stable {
+            return Ok(decisions);
+        }
+    }
+
+    return Err("internal error: spacing constraints are not idempotent".into());
+}
+
 /// Plans spacing changes without mutating the source.
 ///
 /// # Errors
@@ -95,7 +138,8 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
             return Err("invalid source model: gap/unit count mismatch".into());
         }
 
-        let decisions = build_decisions(config, source, global_rules, list);
+        let decisions = settled_decisions(config, source, global_rules, list)?;
+
         for (i, decision) in decisions.iter().enumerate() {
             if blocked(list, i) {
                 result.skipped_boundaries += 1;
@@ -137,28 +181,6 @@ pub fn plan(config: &Config, source: &str, model: &SourceModel) -> Result<Plan, 
                 message: decision.message.to_string(),
                 edit,
             });
-        }
-
-        // The policy on the resulting gap model must be stable, independently of
-        // offsets. The source-adapter tests also reparse and check actual edits.
-        let mut fixed_model = list.clone();
-        for (i, decision) in decisions.iter().enumerate() {
-            if let Some(decision) = decision
-                && let Some(gap) = fixed_model.gaps.get_mut(i)
-            {
-                gap.blank_lines = decision.blanks;
-            }
-        }
-
-        let second = build_decisions(config, source, global_rules, &fixed_model);
-
-        for (i, decision) in second.iter().enumerate() {
-            if let Some(decision) = decision
-                && let Some(gap) = fixed_model.gaps.get(i)
-                && decision.blanks != gap.blank_lines
-            {
-                return Err("internal error: spacing constraints are not idempotent".into());
-            }
         }
     }
 

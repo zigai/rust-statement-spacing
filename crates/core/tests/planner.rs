@@ -1054,6 +1054,60 @@ fn receiver_group_bridges_consumed_setup_only() -> Result<(), Box<dyn Error>> {
     clippy::panic_in_result_fn,
     reason = "assertions define the test failure boundary and Result propagates setup errors"
 )]
+fn check_separation_that_splits_a_receiver_group_settles_in_one_pass() -> Result<(), Box<dyn Error>>
+{
+    let mut check = facts(&[], &["store"]);
+    check.receivers = places(&["store"]);
+    let accumulators = ["rows", "cursor", "window", "notes"];
+    let mut traversal = facts(&[], &["store", "rows", "cursor", "window", "notes"]);
+    traversal.header_reads = places(&["store"]);
+    traversal.writes = places(&["cursor", "window"]);
+    traversal.mutating_receivers = places(&["rows", "notes"]);
+
+    let mut semantics = vec![check.clone(), check];
+    semantics.extend(accumulators.iter().map(|name| return facts(&[name], &[])));
+    semantics.push(traversal);
+    let (source, mut initial) = model(
+        &[
+            UnitKind::Expression,
+            UnitKind::Expression,
+            UnitKind::Let,
+            UnitKind::Let,
+            UnitKind::Let,
+            UnitKind::Let,
+            UnitKind::Control,
+        ],
+        &semantics,
+        &[0; 6],
+    );
+    let units = &mut initial.lists[0].units;
+
+    for unit in units.iter_mut().take(2) {
+        unit.shape.form = Form::Method;
+        unit.shape.fallible = true;
+    }
+
+    for unit in units.iter_mut().skip(2).take(4) {
+        unit.shape.form = Form::Literal;
+        unit.shape.mutable = true;
+    }
+
+    units[6].shape.form = Form::Loop;
+    units[6].shape.loop_body_statements = Some(3);
+
+    let result = plan(&Config::default(), &source, &initial)?;
+    assert_eq!(
+        apply_edits(&source, &result.edits())?,
+        "unit0;\n    unit1;\n\n    unit2;\n    unit3;\n    unit4;\n    unit5;\n\n    unit6;"
+    );
+    return Ok(());
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "assertions define the test failure boundary and Result propagates setup errors"
+)]
 fn receiver_group_keeps_local_flag_check_with_closing_operation() -> Result<(), Box<dyn Error>> {
     for (flag, compact) in [("flag", true), ("unrelated", false)] {
         let mut receiver = facts(&[], &["panel"]);
