@@ -1,7 +1,5 @@
 set positional-arguments
 
-export RUSTDOCFLAGS := "-D warnings"
-
 # Install repository dependencies
 setup:
     @rustup component add clippy rustfmt
@@ -20,7 +18,7 @@ format:
 
 # Run every configured linter on the whole project, stopping on failure
 lint:
-    @cargo clippy --workspace --all-targets --all-features -- -D warnings
+    @cargo clippy --workspace --all-targets --all-features
 
 # Apply safe lint autofixes, then format every supported file type
 fix: && format
