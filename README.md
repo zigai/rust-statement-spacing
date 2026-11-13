@@ -1,9 +1,9 @@
 # Rust Statement Spacing
 
-[![CI](https://github.com/zigai/rust-statement-spacing/actions/workflows/ci.yml/badge.svg)](https://github.com/zigai/rust-statement-spacing/actions/workflows/ci.yml)
-[![rustc: 1.96+](https://img.shields.io/badge/rustc-1.96%2B-orange?logo=rust)](Cargo.toml)
-[![Rust Edition: 2024](https://img.shields.io/badge/edition-2024-blue.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
-[![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue.svg)](#license)
+[![tests](https://img.shields.io/github/actions/workflow/status/zigai/rust-statement-spacing/ci.yml?branch=master&label=tests&labelColor=30363d)](https://github.com/zigai/rust-statement-spacing/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/zigai/rust-statement-spacing?label=release&color=blue&logo=github&labelColor=30363d)](https://github.com/zigai/rust-statement-spacing/releases/latest)
+[![Rust](https://img.shields.io/badge/Rust-1.96+-blue?logo=rust&logoColor=white&labelColor=30363d)](Cargo.toml)
+[![license](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-green?labelColor=30363d)](#license)
 
 A Rust linter and transactional autofixer for blank-line placement and statement grouping, inspired by [Go WSL](https://github.com/bombsimon/wsl). Keep related statements together and separate unrelated operations, control flow, and declarations with whitespace-only, compiler-verified fixes.
 
