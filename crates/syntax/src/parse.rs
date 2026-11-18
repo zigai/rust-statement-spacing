@@ -1,7 +1,8 @@
 use crate::lower::lower;
 use crate::semantics::SemanticIndex;
-use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxKind, SyntaxNode};
+use ra_ap_syntax::{AstNode, Edition, NodeOrToken, SourceFile, SyntaxKind, SyntaxNode};
 use rust_statement_spacing_core::{ByteRange, SourceModel};
+use std::collections::HashMap;
 
 /// Lossless syntax tree and its derived source-unit model.
 pub struct ParsedSource {
@@ -81,10 +82,27 @@ pub fn token_fingerprint(source: &str, edition: &str) -> Result<Vec<(String, Str
 }
 
 fn fingerprint(root: &SyntaxNode) -> Vec<(String, String)> {
-    return root
-        .descendants_with_tokens()
-        .filter_map(|element| return element.into_token())
-        .filter(|token| return token.kind() != SyntaxKind::WHITESPACE)
-        .map(|token| return (format!("{:?}", token.kind()), token.text().to_string()))
-        .collect();
+    let mut names = HashMap::new();
+    let mut tokens = Vec::new();
+    let green = root.green();
+    let mut stack = vec![green.children()];
+    while let Some(children) = stack.last_mut() {
+        match children.next() {
+            None => {
+                stack.pop();
+            }
+            Some(NodeOrToken::Node(node)) => stack.push(node.children()),
+            Some(NodeOrToken::Token(token)) => {
+                let kind = SyntaxKind::from(token.kind().0);
+                if kind != SyntaxKind::WHITESPACE {
+                    let name: &String = names
+                        .entry(kind)
+                        .or_insert_with(|| return format!("{kind:?}"));
+                    tokens.push((name.clone(), token.text().to_owned()));
+                }
+            }
+        }
+    }
+
+    return tokens;
 }

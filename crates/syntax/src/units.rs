@@ -139,14 +139,6 @@ pub(crate) fn unit_kind(node: &SyntaxNode) -> UnitKind {
     }
 }
 
-pub(crate) fn deferred_ranges(node: &SyntaxNode) -> Vec<ByteRange> {
-    return node
-        .descendants()
-        .filter(|child| return child != node && is_deferred(child))
-        .map(|child| return range(&child))
-        .collect();
-}
-
 pub(crate) fn is_deferred(node: &SyntaxNode) -> bool {
     let k = node.kind();
 

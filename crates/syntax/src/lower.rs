@@ -3,7 +3,7 @@ use crate::protection::{Protection, inside_token_tree};
 use crate::semantics::SemanticIndex;
 use crate::shape;
 use crate::units::{
-    code_range, control_body_start, deferred_ranges, expression_node, guard, immediate_body_first,
+    code_range, control_body_start, expression_node, guard, immediate_body_first, is_deferred,
     is_expression, is_item, is_unit, range, unit_kind,
 };
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
@@ -60,11 +60,20 @@ fn make_unit(
         None
     };
 
-    let deferred = deferred_ranges(node);
-    let opaque = node
-        .descendants()
-        .any(|n| matches!(n.kind(), SyntaxKind::MACRO_CALL | SyntaxKind::MACRO_EXPR))
-        || !deferred.is_empty();
+    let mut deferred = Vec::new();
+    let mut opaque = false;
+    for child in node.descendants() {
+        opaque |= matches!(
+            child.kind(),
+            SyntaxKind::MACRO_CALL | SyntaxKind::MACRO_EXPR
+        );
+
+        if child != *node && is_deferred(&child) {
+            deferred.push(range(&child));
+        }
+    }
+
+    opaque |= !deferred.is_empty();
 
     let first = immediate_body_first(&expression);
     let anchor = semantics.and_then(|s| return s.anchor(code));
@@ -130,22 +139,21 @@ fn leading_inner_docs(source: &str, first: &Unit) -> Option<ByteRange> {
 
     let mut start = None;
     let mut end = None;
-    let mut offset = 0;
+    let mut offset = prefix.len();
 
-    for line in prefix.split_inclusive('\n') {
+    for line in prefix.split_inclusive('\n').rev() {
+        offset -= line.len();
         let trimmed = line.trim_start();
+
         if trimmed.starts_with("//!") {
-            if start.is_none() {
-                start = Some(offset + (line.len() - trimmed.len()));
+            start = Some(offset + (line.len() - trimmed.len()));
+
+            if end.is_none() {
+                end = Some(offset + line.trim_end().len());
             }
-
-            end = Some(offset + line.trim_end().len());
         } else if !(trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#')) {
-            start = None;
-            end = None;
+            break;
         }
-
-        offset += line.len();
     }
     return start.and_then(|start| return end.map(|end| return ByteRange::new(start, end)));
 }
